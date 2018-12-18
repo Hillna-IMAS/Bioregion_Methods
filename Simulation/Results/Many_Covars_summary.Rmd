@@ -1,0 +1,323 @@
+---
+title: "Many Covariates Model outputs"
+output:
+  html_document: default
+  word_document: default
+---
+
+* Simulated species with grouped response to environment using multivariate normal mixture model code from Skip
+* Generated 3 groups of responses to hypothetical environmental layers for a region.
+* Only 2 covariates affect the distribution of species- the remaining 6 have little or no effect.
+* Also added species specific intercepts instead of group means (with some variance). These intercepts are somewhat realistic of real assemblages-  more rare species than common species
+
+
+
+## Recap on simulated data
+###Environmental layers
+
+```{r sims_env, echo=FALSE, warnings=FALSE, messages=FALSE}
+suppressMessages(library(plyr) )          #data manipulation
+suppressMessages(library(raster) )        #spatial data
+suppressMessages(library(RColorBrewer))   #colour palettes
+suppressMessages(library(rasterVis) )     #plotting rasters
+suppressMessages(library(RCPmod) )        #Regions of Common Profile
+suppressMessages(library(bbgdm) )         #Bayesian Bootstrap Generalised Dissimilarity Models (and naive GDM)
+suppressMessages(library(gradientForest)) #Gradient Forests (an extension of Random Forests)
+suppressMessages(library(SpeciesMix))     #Species Archetype Models (SAMs)
+suppressMessages(library(randomForest) )  #Random Forests
+suppressMessages(library(HMSC))
+
+#read in data
+path<-"C:/Users/hillna/Dropbox/simulate_communities/"
+source(paste0(path, "Simulation_Additional_Funcs.R"))
+
+load(paste0(path, "Many_covars/sim_env_070518.RData"))
+load(paste0(path, "Many_covars/Many_covars_sim.RData") )
+
+#plot environment layers
+plot(env)
+
+```
+
+
+###Betas for grouped responses
+```{r sims_betas, echo=FALSE, warning=FALSE}
+#plot betas
+plot(x=sim_data$thetas[,2], y= sim_data$thetas[,3], col=sim_data$group+1,
+              xlab="temp", ylab="O2",pch=20, main="species' betas")
+legend("bottomright", legend=paste0("Group ", 1:3),  col=1:3, pch=20)
+```
+
+
+### "True" Distribution of groups (using mean prevalence)
+```{r plot true gps, echo=FALSE}
+set.seed(42)
+#parameters for the beta distribution for the SAM alpha parameter
+betamean <- 0.3
+betabeta <- 15
+betaalpha <- betamean/(1-betamean) * betabeta
+prevalences <- rbeta( 30, betaalpha, betabeta) #prevalences with mean of betaalpha/(betaalpha+betabeta)
+#curve( dbeta( x, betaalpha, betabeta), from=0.001, to=0.999) #the distribution that it is drawn from
+alphas <- log( prevalences / ( 1-prevalences))  #put them on the right scale-- but note that this is conditional on all covars being zero
+
+# setup the betas - how species group should on average respond (means) to each covariate.
+#columns= covariate, rows= groups
+means<-as.matrix(data.frame(temp=c(0.75,0,-0.5), O2=c(0,-0.5,0), NO3=c(0,0,0), sal=c(0,0,0),
+                    depth=c(0, 0,0), chla=c(0,0,0), ssh=c(0,0,0), curr=c(0,0,0)))
+
+#plot True distribution of groups
+mean_alpha<-mean(alphas)
+true_lps<-mean_alpha+ as.matrix(sim_dat[,2:9])%*% t(means)
+true_grps<-exp(true_lps)/(1 +exp(true_lps))
+grp_raster<-rasterize(env_dat[,1:2], env, field= true_grps)
+names(grp_raster)<-paste0("Group", 1:3)
+levelplot(grp_raster, par.settings=YlOrRdTheme, main="True Group Distribution")
+
+# hard class groups
+hc<-apply(true_grps,1, which.max)
+hc_raster<-rasterize(env_dat[,1:2], env, field= hc)
+levelplot(hc_raster, par.settings=YlOrRdTheme, main="True Group Hard Class", margin=FALSE)
+
+
+```
+
+
+
+### Species 'true' probabilities across region, by response group
+
+```{r sim_species, echo=FALSE}
+
+#plot species' occurrence probabilities across region
+sp_prob_brick<- rasterize(x= SpatialPointsDataFrame(coords=env_dat[,1:2], data=as.data.frame(sim_data$sp_probs)), 
+                 y=raster(ncols=51,nrows=51, extent(144.95, 150.05, -40.05, -34.95)))
+sp_prob_brick<-dropLayer(sp_prob_brick,1)
+names(sp_prob_brick)<-paste0("Sp", 1:30)
+
+levelplot(sp_prob_brick, layers=which(sim_data$group==0), par.settings=YlOrRdTheme, main= "Group 1")
+levelplot(sp_prob_brick, layers=which(sim_data$group==1), par.settings=YlOrRdTheme, main= "Group 2")
+levelplot(sp_prob_brick, layers=which(sim_data$group==2),par.settings=YlOrRdTheme, main= "Group 3")
+
+```
+
+## Results of ecoregion analysis with different models
+### Predicted distribution of ecoregions- let the method decide how many regions
+#### Hard clusters
+
+```{r 2clust_hard, echo=FALSE}
+load("pred_clusters.RData")
+
+mods<-names(hard_cluster2)[3:9]
+class_pal<-c("darkolivegreen4", "orange1", "royalblue")
+classTheme<-custom.theme(fill=class_pal)
+
+# correct previously identified label switching
+#hard_cluster2$nonbbGDM<-mapvalues(hard_cluster2$nonbbGDM ,from=c(1,2), to=c(2,1))
+hard_cluster2$bbGDM<-mapvalues(hard_cluster2$bbGDM ,from=c(1,2), to=c(2,1))
+hard_cluster2$nonbbGDM<-mapvalues(hard_cluster2$nonbbGDM ,from=c(1,2), to=c(2,1))
+hard_cluster2$GF<-mapvalues(hard_cluster2$GF ,from=c(1,2), to=c(2,1))
+
+hard_cluster2$SpGrpRF<-apply(bio2_rf_pred,1, which.max)
+#hard_cluster2$SpGrpRF<-mapvalues(hard_cluster2$SpGrpRF ,from=c(1,2), to=c(2,1))
+hard_cluster2$SAM<-apply(sam6_pred$fit, 1, which.max)
+hard_cluster2$RCP<- apply(rcp3_pred[["ptPreds"]], 1, which.max)
+  
+  
+### Plot groups
+clust2<-stack()
+
+for (i in 2:length(mods)){
+  
+  hc_rast<-rasterize(env_dat[,1:2], env, field=hard_cluster2[,mods[i]])
+  names(hc_rast)<-"Group"
+  #create table of factors for raster plotting
+  hc_rast<-ratify(hc_rast)
+  rat <- levels(hc_rast)[[1]]
+  rat$Group <- paste0( "Group ", 1:2)
+  rat$col <- class_pal[1:2]
+  levels(hc_rast) <- rat
+  
+  clust2<-stack(clust2, hc_rast)
+}
+
+names(clust2)<-mods[-1]
+levelplot(clust2)
+
+levelplot(rasterize(env_dat[,1:2], env,field= hard_cluster2$SpGrpRF), margin=FALSE, main="GrpSp_thenRF")
+levelplot(rasterize(env_dat[,1:2], env,field= hard_cluster2$SAM), margin=FALSE, main="SAM_HC")
+levelplot(rasterize(env_dat[,1:2], env,field= hard_cluster2$RCP), margin=FALSE, main="RCP_HC")
+
+levelplot(rasterize(env_dat[,1:2], env,field= hard_cluster2$env), margin=FALSE, main="Env Only")
+
+
+```
+
+#### Probabilstic clusters
+```{r 2clust_prob, echo=FALSE}
+
+dimnames(bio2_rf_pred)[[2]]<- c("RF_Grp1", "RF_Grp2")
+levelplot(rasterize(env_dat[,1:2], env,field= bio2_rf_pred), par.settings=YlOrRdTheme, main="GrpSp_thenRF")
+dimnames(sam6_pred$fit)[[2]]<- c(paste0("SAM_Grp", 1:6))
+levelplot(rasterize(env_dat[,1:2], env, field=sam6_pred$fit), par.settings=YlOrRdTheme, main="SAM")
+levelplot(rasterize(env_dat[,1:2], env,field=rcp3_pred[["ptPreds"]]), par.settings=YlOrRdTheme, main="RCP")
+
+
+
+```
+
+
+### Predicted distribution of ecoregions- force three regions
+#### Hard Clusters
+
+```{r 3clust_hard, echo=FALSE}
+
+# correct previously identified label switching 
+hard_cluster3$nonbbGDM<-mapvalues(hard_cluster3$nonbbGDM ,from=c(1,3), to=c(3,1))
+hard_cluster3$bbGDM<-mapvalues(hard_cluster3$bbGDM ,from=c(1,3), to=c(3,1))
+hard_cluster3$GF<-mapvalues(hard_cluster3$GF ,from=c(1,2,3), to=c(2,3,1))
+hard_cluster3$MNet<-mapvalues(hard_cluster3$MNet ,from=c(2,3), to=c(3,2))
+
+hard_cluster3$SpGrpRF<-apply(bio3_rf_pred,1, which.max)
+#hard_cluster3$SpGrpRF<-mapvalues(hard_cluster3$SpGrpRF ,from=c(1,3), to=c(3,1))
+hard_cluster3$RCP<- apply(rcp3_pred[["ptPreds"]], 1, which.max)
+hard_cluster3$RCP<-mapvalues(hard_cluster3$RCP ,from=c(2,3), to=c(3,2))
+  
+### Plot groups
+clust3<-stack()
+
+for (i in 3:ncol(hard_cluster3)){
+  
+  hc_rast<-rasterize(env_dat[,1:2], env, field=hard_cluster3[,i])
+  names(hc_rast)<-"Group"
+  #create table of factors for raster plotting
+  hc_rast<-ratify(hc_rast)
+  rat <- levels(hc_rast)[[1]]
+  rat$Group <- paste0( "Group ", 1:3)
+  rat$col <- class_pal[1:3]
+  levels(hc_rast) <- rat
+  
+  clust3<-stack(clust3, hc_rast)
+}
+
+names(clust3)<-names(hard_cluster3)[3:ncol(hard_cluster3)]
+
+#SAM hard cluster only has 2 dominant groups
+hard_cluster3$SAM<-apply(sam3_pred$fit, 1, which.max)
+sam_hc<-rasterize(env_dat[,1:2], env, field=hard_cluster3$SAM)
+
+levelplot(clust3)
+levelplot(sam_hc, margin=FALSE, main="SAM")
+```
+
+
+####Probalistic classes
+```{r 3clust_prob, echo=FALSE}
+
+dimnames(bio3_rf_pred)[[2]]<- c("RF_Grp1", "RF_Grp2", "RF_Grp3")
+levelplot(rasterize(env_dat[,1:2], env,field= bio3_rf_pred), par.settings=YlOrRdTheme, main="GrpSp_thenRF")
+dimnames(sam3_pred$fit)[[2]]<- c(paste0("SAM_Grp", 1:3))
+levelplot(rasterize(env_dat[,1:2], env, field=sam3_pred$fit), par.settings=YlOrRdTheme, main="SAM")
+levelplot(rasterize(env_dat[,1:2], env,field=rcp3_pred[["ptPreds"]]), par.settings=YlOrRdTheme, main="RCP")
+
+```
+
+
+## Which environmental Predictors are important?
+
+Group betas set in simulation
+```{r env_pred, echo=FALSE}
+load(paste0(path,"/Many_covars/models.RData"))
+
+env_vars<-dimnames(sim_dat)[[2]][2:9]
+species<-paste0("Sp", 1:30)
+
+#Group betas set in simulation
+data.frame(temp=c(0.75,0,-0.5), O2=c(0,-0.5,0), NO3=c(0,0,0), sal=c(0,0,0),
+                    depth=c(0, 0,0), chla=c(0,0,0), ssh=c(0,0,0), curr=c(0,0,0))
+
+# Group species x site matrix then RF predict
+varImpPlot(bio3_rf, main="SpGrp_thenRF")
+
+
+# RF predict species then group
+rf_sp_varimp<-array(dim=c(length(env_vars),2,length(species)), dimnames=list(env_vars, c("Mean_Decrease_Accuracy", "Mean_Decrease_Gini"), species))
+for( i in 1:length(species)){
+  rf_sp_varimp[, , i]<- rf_sp_mods[[i]]$importance[,3:4]
+}
+
+
+imp<-apply(rf_sp_varimp, c(1,2), mean)
+# modified from VarImpPlot funciton in RandomForest package
+op <- par(mfrow = c(1, 2), mar = c(4, 5, 4, 1), mgp = c(2, 
+                                                        0.8, 0), oma = c(0, 0, 2, 0), no.readonly = TRUE)
+on.exit(par(op))
+
+for (i in 1:2) {
+  ord <- rev(order(imp[, i], decreasing = TRUE)[1:length(env_vars)])
+  xmin <- if (colnames(imp)[i] %in% c("IncNodePurity", "MeanDecreaseGini")) 
+    0
+  dotchart(imp[ord, i], xlab = colnames(imp)[i], ylab = "", 
+           main = "Mean Importance RFsp_thenGrp")
+}
+#mtext(outer = FALSE, side = 3, text = "Mean Importance RFsp_thenGrp", cex = 1.2)
+
+##gradient forest overall importance
+plot(GF_mod, plot.type="Overall.Importance")
+title(main="GF overall importance", outer=TRUE)
+
+```
+
+Bootstrapped GDM Wald test and naive GDM response functions
+```{r gdmimp, echo=FALSE}
+round(bbgdm.wald.test(bbgdm_mod),3)
+
+par(mfrow=c(3,3))
+plot(as.response(nonbb_gdm_mod), main="nonbb GDM responses")
+
+```
+
+RCP change in BIC for selected variables- 4 groups
+```{r RCP, echo=FALSE}
+load("RCP_fwd_sel_res.RData")
+data.frame(temp=7375-7172, O2= 7172-7161, sal=7161-7160, row.names="delta_BIC")
+
+```
+
+SAM betas- 7 groups by environment. Important environmental predictors don't overlap 0. Excpet these are standard errors, not 95%CIs!
+```{r SAM, echo=FALSE}
+
+suppressMessages(library(ggplot2))
+sam_env<-dotplot_env_tab( mean_df=sam6_mod$coef[,2:9],
+                              sd_df= sam6_mod$se[,2:9],
+                              nGrp=6, env=env_vars, method="SAM")
+
+p<-ggplot(data = sam_env, aes(x = Group, y = mean, ymin = lower, ymax = upper)) +
+  geom_point(position = position_dodge(width = 0.8), size=0.6) +
+  geom_errorbar(position = position_dodge(width = 0.8), width = 0.1) +
+  coord_flip() +
+   geom_hline(yintercept=0)+
+ 
+  theme_bw() +
+  theme(panel.grid.major.y = element_line(colour = "grey", linetype = "dashed"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(), 
+        axis.text.y = element_text(face="italic"),
+        legend.key = element_blank()) +
+  facet_wrap( ~env, ncol=3, scales="free") 
+
+p
+```
+
+For HMSC use variance partitioning to identify most important variables
+``` {r hmsc, echo=FALSE}
+
+vp<-variPart(mod_hmsc, groupX = env_vars)
+
+barplot( t(vp),las=2, cex.names=0.75, cex.axis=0.75,col=terrain.colors(10),
+legend.text=paste(colnames(vp)," ",
+signif(100*colMeans(vp),2),"%",sep=""),
+args.legend=list(y=1.2, xjust=1, horiz=F, bty="n",cex=0.75, ncol=3,col=terrain.colors(10)))
+
+```
+
+Don't know how to get equivalent information from mistnet (impenetrable!)
+
