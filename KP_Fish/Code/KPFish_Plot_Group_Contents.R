@@ -19,7 +19,7 @@ library(tidyr)          #data manipulation
 library(ggplot2)        #plotting
 library(SDMTools)       #weighted means and sd
 
-setwd("C:\\Users\\hillna\\UTAS_work\\Antarctic_BioModelling\\Analysis\\Community_modelling\\Comm_Analysis_Methods\\KP_Fish\\")
+setwd("C:\\Users\\hillna\\UTAS_work\\Projects\\Antarctic_BioModelling\\Analysis\\Community_modelling\\Comm_Analysis_Methods\\KP_Fish\\")
 source("Code/Additional_Funcs.R")
 
 #Load required files
@@ -57,27 +57,31 @@ species=c("Antimora.rostrata" ,"Bathydraco.antarcticus", "Bathyraja.eatonii",
 
 
 ## Account for label switching---
-# correct previously identified label switching in hard class methods
 #convert probabalistic methods to give hard classes
 hard_cluster4$BioHC_RF<-apply(bio4_rf_pred,1,which.max)
 hard_cluster4$RCP_Hard<-apply(rcp4_spat_preds[["ptPreds"]],1,which.max)
-hard_cluster4$SAM_Hard<-apply(sam4_pred$fit,1,which.max)
+hard_cluster4$SAM_Hard<-apply(sam4_boot_pred$ptPreds,1,which.max)
 
 #fix label switching
-hard_cluster4$SAM_Hard<-mapvalues(hard_cluster4$SAM ,from=c(1,3), to=c(2,1))
+hard_cluster4$SAM<-mapvalues(hard_cluster4$SAM ,from=c(1,2,3,4), to=c(2,4,1,3))
 hard_cluster4$RCP_Hard<-mapvalues(hard_cluster4$RCP ,from=c(1,2,3,4), to=c(2,3,4,1))
 hard_cluster4$SpRF_HC<-mapvalues(hard_cluster4$SpRF_HC ,from=c(1,2,3,4), to=c(2,4,1,3))
-hard_cluster4$GDM_HC<-mapvalues(hard_cluster4$GDM_HC ,from=c(1,2,3,4), to=c(1,3,2,4))
+hard_cluster4$GDM_Dissim_HC<-mapvalues(hard_cluster4$GDM_Dissim_HC ,from=c(1,2,3,4), to=c(2,4,3,1))
+hard_cluster4$GDM_TransEnv_HC<-mapvalues(hard_cluster4$GDM_TransEnv_HC ,from=c(1,2,3,4), to=c(2,3,1,4))
+hard_cluster4$bbGDM_Dissim_HC<-mapvalues(hard_cluster4$bbGDM_Dissim_HC ,from=c(1,2,3,4), to=c(2,3,4,1))
+hard_cluster4$bbGDM_TransEnv_HC<-mapvalues(hard_cluster4$bbGDM_TransEnv_HC, from=c(1,2,3,4), to=c(2,3,1,4))
 hard_cluster4$GF_HC<-mapvalues(hard_cluster4$GF_HC ,from=c(1,2,3,4), to=c(3,2,4,1))
 hard_cluster4$MNet_HC<-mapvalues(hard_cluster4$MNet_HC ,from=c(1,2,3,4), to=c(2,3,4,1))
 hard_cluster4$HMSC_HC<-mapvalues(hard_cluster4$HMSC_HC ,from=c(1,2,3,4), to=c(2,3,4,1))
 hard_cluster4$BioHC_RF<-mapvalues(hard_cluster4$BioHC_RF ,from=c(1,2,3,4), to=c(1,4,2,3))
 
+
+
 #create raster stack of predictions and extract survey site values
-clusts<-names(hard_cluster4)[4:12]
+clusts<-names(hard_cluster4)[4:14]
 
 ##plot groups
-rat2<-data.frame(ID=1:4, Group=paste0("Group", 1:4))
+rat2<-data.frame(ID=1:4, Group=paste0("Bioregion", 1:4))
 
 clust4<-stack()
 
@@ -99,7 +103,7 @@ site_classes<-as.data.frame(raster::extract(clust4, KP_Fish_Env[,5:6]))
 ### 2 stage methods: predict then heirarchical cluster
 hclust_contents_SE<-list()
  
-for( i in 1:8){
+for( i in 1:10){
   clust_vals<-get_match_vals( site_data= KP_Fish_Env[,species], 
                               pred_cluster_vals=site_classes[,clusts[i]] ,
                               site_index=1:nrow(KP_Fish_Env))
@@ -118,7 +122,7 @@ rcp_calc_contents<-calc_prev(boot_obj = rcp4_boot, mod_obj = rcp4_mod,
 
 rcp_contents_SD<-dotplot_sp_tab (mean_df=t(rcp_calc_contents$mean),
                       error_df= t(rcp_calc_contents$sd),
-                      nGrp=4, species= species, method="RCP_coefs")
+                      nGrp=4, species= species, method="RCP_Coefs")
 
 #take account of label switching
 rcp_contents_SD$Group<-mapvalues(rcp_contents_SD$Group, from=c(1,2,3,4), to=c(2,3,4,1))
@@ -135,8 +139,9 @@ contents_SE<-rbind( do.call(rbind, hclust_contents_SE),
                    rcp_contents_SE)
 
 contents_SE$Method<-factor(contents_SE$Method, 
-                                               levels=c("BioHC_RF", "SpRF_HC", "HMSC_HC", "MNet_HC", "GDM_HC", "bbGDM_HC", "GF_HC", 
-                                                        "RCP_Hard","RCP_coefs"))
+                                               levels=c("BioHC_RF", "SpRF_HC", "HMSC_HC", "MNet_HC", 
+                                                        "GDM_Dissim_HC","GDM_TransEnv_HC",  "bbGDM_Dissim_HC"  , "bbGDM_TransEnv_HC", "GF_HC", 
+                                                        "RCP_Hard","RCP_Coefs"))
 #pretty species labels,
 pretty_sp<-c("A.rostrata", "B.antarcticus"  , "B.eatonii" ,  "B.irrasa",                 
              "B.murrayi",   "C.gunnari", "D.eleginoides" , "E.viator"  ,"G.acuta" ,
@@ -144,7 +149,7 @@ pretty_sp<-c("A.rostrata", "B.antarcticus"  , "B.eatonii" ,  "B.irrasa",
              "Muraenolepis.spp" , "N.rossii"  , "P.gracilis"  ,"Paraliparis.spp." ,                
              "Z.spinifer"  , "C.rhinoceratus")
 
-contents_SE$species<-rep(pretty_sp, 36)
+contents_SE$species<-rep(pretty_sp, 44)
 
 red_sp<-c( "B.antarcticus"  , "B.eatonii" ,                  
            "C.gunnari", "D.eleginoides" ,"G.acuta" ,
@@ -152,16 +157,22 @@ red_sp<-c( "B.antarcticus"  , "B.eatonii" ,
            "Muraenolepis.spp" , "Paraliparis.spp." ,                
            "C.rhinoceratus")
 
-
-p<-ggplot(data = contents_SE[contents_SE$species %in% red_sp,], 
-#p<-ggplot(data = contents_SE,
-          aes(x = species, y = mean, ymin = lower, ymax = upper, colour = Method)) +
+names(contents_SE)[2]<-"Prevalence"
+names(contents_SE)[5]<-"Species"
+contents_SE$Bioregion<-factor(contents_SE$Group, levels=c('1','2','3','4'),
+                          labels=c("Bioregion_1", "Bioregion_2", "Bioregion_3", "Bioregion_4"))
+  
+  
+ #p<-ggplot(data = contents_SE[contents_SE$species %in% red_sp,], 
+p<-ggplot(data = contents_SE,
+          aes(x = Species, y = Prevalence, ymin = lower, ymax = upper, colour = Method)) +
   scale_y_continuous(limits = c(-0.1,1.1)) +
   geom_point(position = position_dodge(0.6), size=0.6) +
   geom_errorbar(position = position_dodge(0.6), width = 0.5) +
   coord_flip() +
   scale_colour_manual(name="Method", 
-                      values = c("purple" ,"pink", "yellow"  , "orange", "green", "chartreuse4", "darkgreen",
+                      values = c("purple" ,"pink", "yellow"  , "orange", 
+                                 "chartreuse1", "chartreuse3", "darkseagreen2", "darkgreen", "darkslategray",
                                   "cornflowerblue", "darkblue")) + #need to add enough colour for sampling levels here!
   theme_bw() +
   theme(panel.grid.major.y = element_line(colour = "grey", linetype = "dashed"),
@@ -169,10 +180,33 @@ p<-ggplot(data = contents_SE[contents_SE$species %in% red_sp,],
         panel.grid.minor.x = element_blank(), 
         axis.text.y = element_text(face="italic"),
         legend.key = element_blank()) +
-  facet_wrap( ~Group, ncol=4, scales="free_x") 
+  facet_wrap( ~Bioregion, ncol=4, scales="free_x") 
 
-tiff(file="Results/Plots/Grp_sp_redSE.tiff", height=8, width=18, units="cm", res=1000)
+tiff(file="Results/Plots/Grp_sp_SE.tiff", height=16, width=18, units="cm", res=1000)
 p 
+dev.off()
+
+
+## Plot species profile from RCP coefficients separately ----
+
+p<-ggplot(data = contents_SE[contents_SE$Method %in% "RCP_Coefs",],
+          aes(x = Species, y = Prevalence, ymin = lower, ymax = upper, colour = Method)) +
+  scale_y_continuous(limits = c(-0.1,1.1)) +
+  geom_point(position = position_dodge(0.6), size=0.6) +
+  geom_errorbar(position = position_dodge(0.6), width = 0.5) +
+  coord_flip() +
+  scale_colour_manual(name="Method", 
+                      values = c("blue")) + #need to add enough colour for sampling levels here!
+  theme_bw() +
+  theme(panel.grid.major.y = element_line(colour = "grey", linetype = "dashed"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(), 
+        axis.text.y = element_text(face="italic"))+
+        #legend.key = element_blank()) +
+  facet_wrap( ~Bioregion, ncol=4, scales="free_x") 
+
+tiff(file="Results/Plots/RCP_sp_SE.tiff", height=10, width=18, units="cm", res=1000)
+p + theme(legend.position = "none")
 dev.off()
 
 
