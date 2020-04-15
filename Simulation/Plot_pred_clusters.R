@@ -21,10 +21,11 @@ library(rasterVis)      #plotting rasters
 
 #Load required files
 # most files in "simulate_communities/Many_covars" folder on dropbox
-setwd("C:\\Users\\hillna\\UTAS_work\\Antarctic_BioModelling\\Analysis\\Community_modelling\\Comm_Analysis_Methods\\Simulation\\")
+setwd("C:\\Users\\hillna\\UTAS_work\\Projects\\Antarctic_BioModelling\\Analysis\\Community_modelling\\Comm_Analysis_Methods\\Simulation\\")
 source("Simulation_Additional_Funcs.R")
 
-load("Sim_Setup/Many_covars_sim.RData")
+load("Sim_Setup/Many_covars_sim_fin.RData")
+#load("Sim_Setup/Many_covars_sim.RData")
 load("Sim_setup/sim_env_070518.RData") 
 # env= raster brick of environmental data for entire region
 # env_dat= raster brick of environmental data for entire region converted to matrix
@@ -78,7 +79,9 @@ dev.off()
 ### Look for label switching of classes in hard class outputs
 # (i.e. class1 in Sp_RF is class 2 in HMSC). Make all relative to Sp_RF
 
-mods<-c("Sp_RF", "HMSC", "MNet5_clust", "bbGDM", "nonbbGDM", "GF", "env")
+mods<-c( "Sp_RF","HMSC" , "MNet5_clust" , "GDM_Dissim_HC","GDM_TransEnv_HC",  
+        "bbGDM_Dissim_HC"  , "bbGDM_TransEnv_HC",  "GF", "env")
+
 
 check_clust2<-list()
 for (i in 1: length(mods)){
@@ -88,8 +91,10 @@ names(check_clust2)<-mods
 
 # attempt to make labels match up to true classes
 hard_cluster2$Sp_RF<-mapvalues(hard_cluster2$Sp_RF ,from=c(1,2), to=c(1,3))
-hard_cluster2$bbGDM<-mapvalues(hard_cluster2$bbGDM ,from=c(1,2), to=c(2,1))
-hard_cluster2$nonbbGDM<-mapvalues(hard_cluster2$nonbbGDM ,from=c(1,2), to=c(2,1))
+hard_cluster2$GDM_Dissim_HC<-mapvalues(hard_cluster2$GDM_Dissim_HC ,from=c(1,2), to=c(3,1))
+hard_cluster2$GDM_TransEnv_HC<-mapvalues(hard_cluster2$GDM_TransEnv_HC ,from=c(2), to=c(3))
+hard_cluster2$bbGDM_Dissim_HC<-mapvalues(hard_cluster2$bbGDM_Dissim_HC ,from=c(1,2), to=c(3,1))
+hard_cluster2$bbGDM_TransEnv_HC<-mapvalues(hard_cluster2$bbGDM_TransEnv_HC ,from=c(1,2), to=c(3,1))
 hard_cluster2$GF<-mapvalues(hard_cluster2$GF, from=c(1,2), to=c(1,3)) 
 hard_cluster2$HMSC<-mapvalues(hard_cluster2$HMSC, from=c(1,2,3), to=c(2,1,3)) 
 hard_cluster2$MNet5_clust<-mapvalues(hard_cluster2$MNet5_clust ,from=c(1,3,5), to=c(5,1,3))
@@ -98,7 +103,9 @@ hard_cluster2$MNet5_clust<-mapvalues(hard_cluster2$MNet5_clust ,from=c(1,3,5), t
 ### Create raster stack with hard class groups for plotting
 #set up
 clust2<-stack()
-pretty_names<-c("SpRF_HC", "HMSC_HC", "MNet_HC", "GDM_HC", "bbGDM_HC", "GF_HC", "Env_Only")
+pretty_names<-c("SpRF_HC","HMSC_HC" , "MNet_HC" , 
+                "GDM_Dissim_HC","GDM_TransEnv_HC",  "bbGDM_Dissim_HC"  , 
+                "bbGDM_TransEnv_HC",  "GF_HC", "Env_Only")
 
 #create factor attribute layer with as many levels as greatest number of clusters
 rat<-data.frame(ID=1:11, Group=paste0("Group", 1:11))
@@ -118,35 +125,35 @@ names(clust2)<-pretty_names
 class_pal<-c("darkolivegreen4","grey", "orange1", "darkred", "cadetblue", "cornsilk", 
              "goldenrod", "darkolivegreen3", "darkorange2" ,"deeppink3","deepskyblue3")
 
-#plot simulation groups
+p.strip <- list(cex=0.58, lines=1)
 
 #plot hard cluster outputs
 tiff(filename="Results/Plots/many_covar_HClusts.tiff", compression="lzw", 
      width=11, height=11, units="cm", res=1000)
 levelplot(clust2, layout=c(3,3),scales=list(draw=FALSE), 
-          col.regions=class_pal)
+          col.regions=class_pal,  par.strip.text=p.strip)
 dev.off()
 
 ##plot probability of occurrence outputs
 #BioHC_RF
 
-dimnames(bio2_rf_pred)[[2]]<-c("Group3", "Group1")
+dimnames(bio2_rf_pred)[[2]]<-c("Bioregion3", "Bioregion1")
 
 tiff(filename="Results/Plots/BioHC_RF.tiff", compression="lzw", 
      width=6, height=6, units="cm", res=1000)
-levelplot(rasterize(env_dat[,1:2], env,field= bio2_rf_pred[,c("Group1", "Group3")]), 
+levelplot(rasterize(env_dat[,1:2], env,field= bio2_rf_pred[,c("Bioregion1", "Bioregion3")]), 
           par.settings=YlOrRdTheme, names.attr=c("", ""),
           scales=list(draw=FALSE))
 dev.off()
 
 #SAM
 #account for label switching
-dimnames(sam3_pred$fit)[[2]]<- c(paste0("Group", c(2,1,3)))
-dimnames(sam3_pred$se.fit)[[2]]<- c(paste0("Group", c(2,1,3)))
+dimnames(sam3_pred$ptPreds)[[2]]<- c(paste0("Bioregion", c(2,3,1)))
+dimnames(sam3_pred$bootSEs)[[2]]<- c(paste0("Bioregion", c(2,3,1)))
 
 tiff(filename="Results/Plots/SAM.tiff", compression="lzw", 
      width=8, height=8, units="cm", res=1000)
-levelplot(rasterize(env_dat[,1:2], env, field=sam3_pred$fit[,paste0("Group", 1:3)]), 
+levelplot(rasterize(env_dat[,1:2], env, field=sam3_pred$ptPreds[,paste0("Bioregion", 1:3)]), 
           col.regions=prob_pal(19),
           at=seq(0,1,length=18),
           colorkey=list(at=seq(0,1,length=18),col=prob_pal(19)),
@@ -155,12 +162,12 @@ levelplot(rasterize(env_dat[,1:2], env, field=sam3_pred$fit[,paste0("Group", 1:3
 dev.off()
 
 #RCP
-dimnames(rcp3_pred[["ptPreds"]])[[2]]<- c(paste0("Group", c(3,1,2)))
-dimnames(rcp3_pred[["bootSEs"]])[[2]]<- c(paste0("Group", c(3,1,2)))
+dimnames(rcp3_pred[["ptPreds"]])[[2]]<- c(paste0("Bioregion", c(3,1,2)))
+dimnames(rcp3_pred[["bootSEs"]])[[2]]<- c(paste0("Bioregion", c(3,1,2)))
 
 tiff(filename="Results/Plots/RCP.tiff", compression="lzw", 
      width=8, height=6, units="cm", res=1000)
-levelplot(rasterize(env_dat[,1:2], env,field=rcp3_pred[["ptPreds"]][,paste0("Group", 1:3)]), 
+levelplot(rasterize(env_dat[,1:2], env,field=rcp3_pred[["ptPreds"]][,paste0("Bioregion", 1:3)]), 
           col.regions=prob_pal(19),
           at=seq(0,1,length=18),
           colorkey=list(at=seq(0,1,length=18),col=prob_pal(19)),
@@ -178,14 +185,17 @@ dev.off()
 #convert probabalistic methods to give hard classes
 hard_cluster3$True<-apply(true_grps,1,which.max)
 hard_cluster3$BioHC_RF<-apply(bio3_rf_pred,1,which.max)
-hard_cluster3$SAM<-apply(sam3_pred$fit,1,which.max)
+hard_cluster3$SAM<-apply(sam3_pred$ptPreds,1,which.max)
 hard_cluster3$RCP<-apply(rcp3_pred[["ptPreds"]],1,which.max)
 
 #fix label switching
-mods2<-c("True",  "BioHC_RF", "Sp_RF", "HMSC", "MNet", "nonbbGDM",
-         "bbGDM", "GF", "SAM", "RCP", "env")
-pretty_names2<-c("True", "BioHC_RF", "SpRF_HC", "HMSC_HC", 
-                 "MNet_HC", "GDM_HC", "bbGDM_HC", "GF_HC","SAM", "RCP" ,"Env_Only")
+mods2<-c(  "BioHC_RF", "Sp_RF", "HMSC", "MNet", 
+         "GDM_Dissim_HC","GDM_TransEnv_HC", "bbGDM_Dissim_HC", 'bbGDM_TransEnv_HC',
+          "GF", "SAM", "RCP", "env","True")
+
+pretty_names2<-c("BioHC_RF", "SpRF_HC", "HMSC_HC", "MNet_HC", 
+                 "GDM_Dissim_HC","GDM_TransEnv_HC", "bbGDM_Dissim_HC", 'bbGDM_TransEnv_HC',
+                 "GF_HC","SAM", "RCP" ,"Env_Only", "True")
 
 
 check_clust3<-list()
@@ -199,13 +209,16 @@ hard_cluster3$BioHC_RF<-mapvalues(hard_cluster3$BioHC_RF ,from=c(1,3), to=c(3,1)
 hard_cluster3$Sp_RF<-mapvalues(hard_cluster3$Sp_RF ,from=c(1,2), to=c(2,1))
 hard_cluster3$HMSC<-mapvalues(hard_cluster3$HMSC ,from=c(1,2,3), to=c(2,1,3))
 hard_cluster3$MNet<-mapvalues(hard_cluster3$MNet ,from=c(1,3), to=c(3,1))
-hard_cluster3$bbGDM<-mapvalues(hard_cluster3$bbGDM ,from=c(1,2), to=c(2,1))
+hard_cluster3$GDM_Dissim_HC<-mapvalues(hard_cluster3$GDM_Dissim_HC ,from=c(1,2), to=c(2,1))
+hard_cluster3$GDM_TransEnv_HC<-mapvalues(hard_cluster3$GDM_TransEnv_HC ,from=c(1,2), to=c(2,1))
+hard_cluster3$bbGDM_Dissim_HC<-mapvalues(hard_cluster3$bbGDM_Dissim_HC ,from=c(1,2), to=c(2,1))
+hard_cluster3$bbGDM_TransEnv_HC<-mapvalues(hard_cluster3$bbGDM_TransEnv_HC ,from=c(1,2), to=c(2,1))
 hard_cluster3$GF<-mapvalues(hard_cluster3$GF ,from=c(1,2), to=c(2,1))
-hard_cluster3$SAM<-mapvalues(hard_cluster3$SAM ,from=c(1,2), to=c(2,1))
+hard_cluster3$SAM<-mapvalues(hard_cluster3$SAM ,from=c(1,2,3), to=c(2,3,1))
 hard_cluster3$RCP<-mapvalues(hard_cluster3$RCP ,from=c(1,2,3), to=c(3,1,2))
 
 ##plot groups
-rat2<-data.frame(ID=1:3, Group=paste0("Group", 1:3))
+rat2<-data.frame(ID=1:3, Group=paste0("Bioregion", 1:3))
 
 clust3<-stack()
 
@@ -224,29 +237,30 @@ names(clust3)<-pretty_names2
 
 tiff(file="Results/Plots/Cluster3_HCpredictions.tiff",compression="lzw", 
      width=14, height=14, units="cm", res=1000)
-levelplot(clust3,layout=c(4,3),scales=list(draw=FALSE), 
+levelplot(clust3,layout=c(4,4),scales=list(draw=FALSE), 
           col.regions=class_pal[1:3])
 dev.off()
 
 #####################################################
 ### Plot uncertainty for SAMs and RCPS
 
-grey_pal<-rev(gray.colors(n=19, start=0.4, end=1))
+#fix label switching
+dimnames(sam3_pred$bootSEs)[[2]]<-paste0("Bioregion", c(2,3,1))
+#grey_pal<-rev(gray.colors(n=19, start=0.4, end=1))
 
 tiff(file="Results/Plots/SAM_RCP_SEs.tiff",compression="lzw", 
      width=14, height=10, units="cm", res=1000)
-plot(levelplot(rasterize(env_dat[,1:2], env,field=sam3_pred[["se.fit"]][,paste0("Group", 1:3)]), 
-    layout=c(3,1),at=seq(0,0.4,length=18), col.regions=grey_pal,
-    colorkey=list(at=seq(0,0.4,length=18),col=grey_pal),
+plot(levelplot(rasterize(env_dat[,1:2], env,field=sam3_pred$bootSEs[,paste0("Bioregion", 1:3)]), 
+    layout=c(3,1),at=seq(0,0.4,length=18), col.regions=prob_pal,
+    colorkey=list(at=seq(0,0.4,length=18),col=prob_pal),
     scales=list(draw=FALSE), main="SAM"), 
      split=c(1,1,1,2))
 
-plot(levelplot(rasterize(env_dat[,1:2], env,field=rcp3_pred[["bootSEs"]][,paste0("Group", 1:3)]), 
-     layout=c(3,1), at=seq(0,0.4,length=18),col.regions=grey_pal,
-     colorkey=list(at=seq(0,0.4,length=18),col=grey_pal),
+plot(levelplot(rasterize(env_dat[,1:2], env,field=rcp3_pred[["bootSEs"]][,paste0("Bioregion", 1:3)]), 
+     layout=c(3,1), at=seq(0,0.4,length=18),col.regions=prob_pal,
+     colorkey=list(at=seq(0,0.4,length=18),col=prob_pal),
      scales=list(draw=FALSE), main="RCP"), 
      split=c(1,2,1,2),newpage=FALSE)
 dev.off()
-# uncertainty for SAMs looks suspiscously similar between groups- check with Skip
 
 
