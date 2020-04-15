@@ -466,45 +466,314 @@ plot_partial<-function(env_vars,             # names of environmental variables 
 ## bbGDM ----
 #################################
 
-#function to generate predicted pairwise dissimilarites for entire region based on environmental variables
+## bbgdm wrapper around gdm
+bbgdm <- function(data, geo=FALSE, splines=NULL, knots=NULL, bootstraps=10, ncores=1){
+  
+  ## generate the number of sites for bayesian bootstrap.
+  sitecols <- c('s1.xCoord','s1.yCoord','s2.xCoord','s2.yCoord')
+  sitedat <- rbind(as.matrix(data[,sitecols[1:2]]),as.matrix(data[,sitecols[3:4]]))
+  nsites <- nrow(sitedat[!duplicated(sitedat[,1:2]),])
+  
+  mods <- surveillance::plapply(1:bootstraps, bb_apply, nsites, data, geo, splines, knots, .parallel = ncores)
+  
+  median.intercept <- apply(plyr::ldply(mods, function(x) c(x$intercept)),2,median,na.rm=TRUE)
+  quantiles.intercept <- apply(plyr::ldply(mods, function(x) c(x$intercept)),2, function(x) quantile(x,c(.05,.25,.5,.75, .95),na.rm=TRUE))  
+  
+  median.coefs <- apply(plyr::ldply(mods, function(x) c(x$coefficients)),2,median,na.rm=TRUE)
+  quantiles.coefs <- apply(plyr::ldply(mods, function(x) c(x$coefficients)),2, function(x) quantile(x,c(.05,.25,.5,.75, .95),na.rm=TRUE))
+  results <- list(gdms=mods[[1]],
+ # results <- list(gdms=mods,
+                  median.intercept=median.intercept,
+                  quantiles.intercept=quantiles.intercept,
+                  median.coefs=median.coefs,
+                  quantiles.coefs=quantiles.coefs)
+  class(results) <- c("bbgdm", "list")
+  return(results)
+}
 
-pred_gdm_dissim<-function(bbgdm_mod,           # object output from bbgdm function
-                          naive=FALSE,         # is object naive (nonbootstrap) gdm
-                          env_data)            # marix or dataframe containing environmental variables to predict with (only include those used in bbgdm_mod)   
-{
+bb_apply <- function(x,nsites,data,geo,splines,knots){
+  
+  # creates the weights for bayes boot
+  w <- gtools::rdirichlet(nsites, rep(1/nsites,nsites))
+  wij <- w%*%t(w)
+  wij <- wij[upper.tri(wij)]
+  tmp <- data
+  tmp$weights <- wij
+  x <- gdm(tmp, geo=geo, splines=splines, knots=knots)
+  return(x)
+}
+
+## function for predicting dissimilarities
+predict_gdm <- function(mod, newobs, bbgdm=TRUE){
+  
+  # newobs <- bbgdm::diff_table_cpp(as.matrix(newdat))
+  # newobs <- data.frame(dissim=0,weights=0,s1.x=0,s1.Y=0,s2.X=0,s2.Y=0,newobs)
+  
+  if(isTRUE(bbgdm)){
+    predicted <- rep(0,times=nrow(newobs))
+    #object <- mod$gdms[[1]]
+    #knots <- mod$gdms[[1]]$knots
+    #splineNo <- mod$gdms[[1]]$splines
+    object <- mod$gdms
+    knots <- mod$gdms$knots
+    splineNo <- mod$gdms$splines
+    intercept <- mod$median.intercept 
+    coefs <- mod$median.coefs
+    
+    pred <- .C( "GDM_PredictFromTable",
+                as.matrix(newobs),
+                as.integer(FALSE),
+                as.integer(length(object$predictors)), 
+                as.integer(nrow(newobs)), 
+                as.double(knots),
+                as.integer(splineNo),
+                as.double(c(intercept,coefs)),
+                preddata = as.double(predicted),
+                PACKAGE = "gdm")
+    
+  } else{
+    predicted <- rep(0,times=nrow(newobs))
+    object <- mod
+    knots <- object$knots
+    splineNo <- object$splines
+    intercept <- object$intercept 
+    coefs <- object$coefficients
+    
+    pred <- .C( "GDM_PredictFromTable",
+                as.matrix(newobs),
+                as.integer(FALSE),
+                as.integer(length(object$predictors)), 
+                as.integer(nrow(newobs)), 
+                as.double(knots),
+                as.integer(splineNo),
+                as.double(c(intercept,coefs)),
+                preddata = as.double(predicted),
+                PACKAGE = "gdm")
+  }
+  
+  # class(pred$preddata)='dist'
+  # attr(pred$preddata,"Size")<-nrow(sim_dat) # bug here sorry about that should have been 'newdat'
+  # pred <- as.dist(pred$preddata)
+  pred$preddata
+  
+}
+
+
+
+## now let's cluster on the transformed environment.
+## function that does this based on the bbgdm function:
+bbgdm.transform <- function(model, data){
+  #################
+  ##lines used to quickly test function
+  #model <- gdmModel 
+  #data <- climCurrExt
+  #data <- cropRasts[[3:nlayers(cropRasts)]]
+  #################
+  options(warn.FPU = FALSE)
+  rastDat <- NULL
+  dataCheck <- class(data)
+  
+  ##error checking of inputs
+  ##checks to make sure a gdm model is given
+  if(class(model)[1]!="bbgdm"){
+    stop("model argument must be a gdm model object")
+  }
+  ##checks to make sure data is a correct format
+  if(!(dataCheck=="RasterStack" | dataCheck=="RasterLayer" | dataCheck=="RasterBrick" | dataCheck=="data.frame")){
+    stop("Data to be transformed must be either a raster object or data frame")
+  }
+  
+  ##checks rather geo was T or F in the model object
+  #geo <- model$gdms[[1]]$geo
+  geo <- model$gdms$geo
+  
+  ##turns raster data into dataframe
+  if(dataCheck=="RasterStack" | dataCheck=="RasterLayer" | dataCheck=="RasterBrick"){
+    ##converts the raster object into a dataframe, for the gdm transformation
+    rastDat <- data
+    data <- rasterToPoints(rastDat)
+    ##determines the cell number of the xy coordinates
+    rastCells <- cellFromXY(rastDat, xy=data[,1:2]) 
+    
+    ##checks for NA in the 
+    checkNAs <- as.data.frame(which(is.na(data), arr.ind=T))
+    if(nrow(checkNAs)>0){
+      warning("After extracting raster data, NAs found from one or more layers. Removing NAs from data object to be transformed.")
+      data <- na.omit(data)
+      rastCells <- rastCells[-c(checkNAs$row)]
+    }
+    
+    ##if geo was not T in the model, removes the coordinates from the data frame
+    if(geo==FALSE){
+      data <- data[,3:ncol(data)]
+    }
+  }
+  
+  sizeVal <- 10000000
+  ##sets up the data to be transformed into pieces to be transformed
+  holdData <- data
+  fullTrans <- matrix(0,nrow(holdData),ncol(holdData))
+  rows <- nrow(holdData)
+  istart <- 1
+  iend <- min(sizeVal,rows)
+  ##to prevent errors in the transformation of the x and y values when geo is a predictor,
+  ##extracts the rows with the minimum and maximum x and y values, these rows will be added
+  ##onto the "chuck" given to transform, and then immediately removed after the transformation,
+  ##this makes sure that the c++ code will always have access to the minimum and maximum 
+  ##x and y values
+  if(geo==TRUE){
+    if(dataCheck=="RasterStack" | dataCheck=="RasterLayer" | dataCheck=="RasterBrick"){
+      xMaxRow <- holdData[which.max(holdData[,"x"]),]
+      xMinRow <- holdData[which.min(holdData[,"x"]),]
+      yMaxRow <- holdData[which.max(holdData[,"y"]),]
+      yMinRow <- holdData[which.min(holdData[,"y"]),]
+    }
+  }
+  
+  ##transform the data based on the gdm
+  ##part of a loop to prevent memory errors 
+  while(istart < rows){
+    ##Call the dll function
+    data <- holdData[istart:iend,]
+    ##adds coordinate rows to data to be transformed
+    if((dataCheck=="RasterStack" | dataCheck=="RasterLayer" | dataCheck=="RasterBrick") & geo==TRUE){
+      data <- rbind(xMaxRow, xMinRow, yMaxRow, yMinRow, data)
+    }
+    transformed <- matrix(0,nrow(data),ncol(data))
+    z <- .C( "GDM_TransformFromTable",
+             as.integer(nrow(data)), 
+             as.integer(ncol(data)),
+             as.integer(model$gdms$geo),
+             as.integer(length(model$gdms$predictors)), 
+             as.integer(model$gdms$splines),             
+             as.double(model$gdms$knots),             
+             as.double(model$median.coefs),
+             as.matrix(data),
+             trandata = as.double(transformed),
+             PACKAGE = "gdm")
+    
+    ## Convert transformed from a vector into a dataframe before returning...
+    nRows <- nrow(data)
+    nCols <- ncol(data)
+    
+    ## z$trandata is the transformed data vector created
+    myVec <- z$trandata
+    pos <- 1
+    ##fills out dataframe with transformed values
+    for (i in seq(from = 1, to = nCols, by = 1)) {
+      tmp <- myVec[seq(from=pos, to=pos+nRows-1)]
+      transformed[,i] <- tmp
+      pos <- pos + nRows
+    }
+    
+    ##remove the coordinate rows before doing anything else
+    if((dataCheck=="RasterStack" | dataCheck=="RasterLayer" | dataCheck=="RasterBrick") & geo==TRUE){
+      transformed <- transformed[-c(1:4),]
+    }
+    
+    ##places the transformed values into the readied data frame 
+    fullTrans[istart:iend,] <- transformed
+    istart <- iend + 1
+    iend <- min(istart + (sizeVal-1), rows)
+  }
+  
+  ##if wanted output data as raster, provides maps raster, or output table
+  if(dataCheck=="RasterStack" | dataCheck=="RasterLayer" | dataCheck=="RasterBrick"){
+    ##maps the transformed data back to the input rasters
+    rastLay <- rastDat[[1]]
+    rastLay[] <- NA
+    outputRasts <- stack()
+    for(nn in 1:ncol(fullTrans)){
+      #print(nn)
+      #nn=1
+      holdLay <- rastLay
+      holdLay[rastCells] <- fullTrans[,nn]
+      #holdLay[rastCells] <- holdData[,nn]
+      
+      outputRasts <- stack(outputRasts, holdLay)
+    }
+    ##renames raster layers to be the same as the input
+    if(geo){
+      names(outputRasts) <- c("xCoord", "yCoord", names(rastDat))
+    } else {
+      names(outputRasts) <- names(rastDat)
+    }
+    
+    ##get the predictors with non-zero sum of coefficients      
+    splineindex <- 1
+    predInd <- NULL
+    for(i in 1:length(model$gdms$predictors)){  
+      #i <- 1
+      ##only if the sum of the coefficients associated with this predictor is > 0.....
+      numsplines <- model$gdms$splines[i]
+      if(sum(model$median.coefs[splineindex:(splineindex+numsplines-1)])>0){
+        predInd <- c(predInd, i)
+      }
+      splineindex <- splineindex + numsplines
+    }
+    if(geo){
+      predInd <- c(1,2,predInd[-1]+1)
+    }
+    
+    outputRasts <- outputRasts[[predInd]]
+    
+    ##returns rasters
+    return(outputRasts)
+  }else{
+    if(is.null(rastDat)){
+      ##if not raster data, sends back the transformed data
+      colnames(fullTrans) <- colnames(data)
+      return(fullTrans)
+    }else{
+      ##returns only the transformed variable data as a table, and the cells with which to map to
+      colnames(fullTrans) <- colnames(data)
+      return(list(fullTrans, rastCells))
+    }
+  }
+}
+
+
+
+##superceeded by above
+#function to generate predicted pairwise dissimilarites for entire region based on environmental variables and bbgdm package
+
+#pred_gdm_dissim<-function(bbgdm_mod,           # object output from bbgdm function
+#                          naive=FALSE,         # is object naive (nonbootstrap) gdm
+#                          env_data)            # marix or dataframe containing environmental variables to predict with (only include those used in bbgdm_mod)   
+#{
   # get model betas  
-  if (naive== FALSE){
-    betas<-bbgdm_mod$median.coefs.se
-  }
-  else{
-    betas<-bbgdm_mod$starting_gdm$coef
-  }
+# if (naive== FALSE){
+#    betas<-bbgdm_mod$median.coefs.se
+#  }
+#  else{
+#    betas<-bbgdm_mod$starting_gdm$coef
+#  }
   
   
   #create table of prediction pairwise differences in environmental variables
-  env_diffs <- bbgdm::diff_table_cpp(env_data)
+#  env_diffs <- bbgdm::diff_table_cpp(env_data)
   #remove intercept
   #env_diffs<-env_diffs[,-1]
   
   #transform using attributes of spline functions in explanaotry bbgdm model
-  X <- lapply(1:ncol(env_diffs),function(x)bbgdm::spline_trans_for_pred(env_diffs[,x], attrib = bbgdm_mod$dissim_dat_params[[x]])) 
-  Xall <- do.call(cbind,X)
-  dim(Xall) # should be ndissimilarities * ncoefs from bbgdm model.
+#  X <- lapply(1:ncol(env_diffs),function(x)bbgdm::spline_trans_for_pred(env_diffs[,x], attrib = bbgdm_mod$dissim_dat_params[[x]])) 
+#  Xall <- do.call(cbind,X)
+#  dim(Xall) # should be ndissimilarities * ncoefs from bbgdm model.
   
   # generate the linear predictor
-  pred_dissim_linear_predictor <- cbind(1,Xall)%*%betas
+#  pred_dissim_linear_predictor <- cbind(1,Xall)%*%betas
   
   #convert to dissimilarities (assumes logit link was used in bbgdm_mod)
-  predicted_dissimilarities <- plogis(pred_dissim_linear_predictor)
+#  predicted_dissimilarities <- plogis(pred_dissim_linear_predictor)
   
   #reformat into dissimilarity matrix
-  dissim<-predicted_dissimilarities
-  class(dissim)='dist'
-  attr(dissim,"Size")<-nrow(env_data)
-  dissim<-as.dist(dissim)
+#  dissim<-predicted_dissimilarities
+#  class(dissim)='dist'
+#  attr(dissim,"Size")<-nrow(env_data)
+#  dissim<-as.dist(dissim)
   
-  return(dissim)
-}
+#  return(dissim)
+#}
 
 
 ############################################################################################
