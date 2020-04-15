@@ -15,17 +15,18 @@
 #######################
 # Get required libraries
 library(tidyr)           #data manipulation
-library(ggplot2)        #plotting
+library(ggplot2)         #plotting
 #library(raster)         #spatial data
 #library(RColorBrewer)   #colour palettes
 #library(rasterVis)      #plotting rasters
-library(RCPmod)         #Regions of Common Profile
-library(bbgdm)          #Bayesian Bootstrap Generalised Dissimilarity Models (and naive GDM)
-library(gradientForest) #Gradient Forests (an extension of Random Forests)
-library(ecomix)     #Species Archetype Models (SAMs)
-library(SDMTools)       #weighted means and sd
+library(RCPmod)          #Regions of Common Profile
+#library(bbgdm)          #Bayesian Bootstrap Generalised Dissimilarity Models (and naive GDM)
+library(gdm)             # Generalised Dissimilarity Models
+library(gradientForest)  #Gradient Forests (an extension of Random Forests)
+library(ecomix)          #Species Archetype Models (SAMs)
+library(SDMTools)        #weighted means and sd
 
-setwd("C:\\Users\\hillna\\UTAS_work\\Antarctic_BioModelling\\Analysis\\Community_modelling\\Comm_Analysis_Methods\\KP_Fish\\")
+setwd("C:\\Users\\hillna\\UTAS_work\\Projects\\Antarctic_BioModelling\\Analysis\\Community_modelling\\Comm_Analysis_Methods\\KP_Fish\\")
 source("Code/Additional_Funcs.R")
 
 #Load required files
@@ -76,14 +77,17 @@ species=c("Antimora.rostrata" ,"Bathydraco.antarcticus", "Bathyraja.eatonii",
 ## Account for label switching---
 #convert probabalistic methods to give hard classes
 hard_cluster4$BioHC_RF<-apply(bio4_rf_pred,1,which.max)
-hard_cluster4$SAM<-apply(sam4_pred$fit,1,which.max)
+hard_cluster4$SAM<-apply(sam4_boot_pred$ptPreds,1,which.max)
 hard_cluster4$RCP<-apply(rcp4_spat_preds[["ptPreds"]],1,which.max)
 
 #fix label switching
-hard_cluster4$SAM<-mapvalues(hard_cluster4$SAM ,from=c(1,3), to=c(2,1))
+hard_cluster4$SAM<-mapvalues(hard_cluster4$SAM ,from=c(1,2,3,4), to=c(2,4,1,3))
 hard_cluster4$RCP<-mapvalues(hard_cluster4$RCP ,from=c(1,2,3,4), to=c(2,3,4,1))
 hard_cluster4$SpRF_HC<-mapvalues(hard_cluster4$SpRF_HC ,from=c(1,2,3,4), to=c(2,4,1,3))
-hard_cluster4$GDM_HC<-mapvalues(hard_cluster4$GDM_HC ,from=c(1,2,3,4), to=c(1,3,2,4))
+hard_cluster4$GDM_Dissim_HC<-mapvalues(hard_cluster4$GDM_Dissim_HC ,from=c(1,2,3,4), to=c(2,4,3,1))
+hard_cluster4$GDM_TransEnv_HC<-mapvalues(hard_cluster4$GDM_TransEnv_HC ,from=c(1,2,3,4), to=c(2,3,1,4))
+hard_cluster4$bbGDM_Dissim_HC<-mapvalues(hard_cluster4$bbGDM_Dissim_HC ,from=c(1,2,3,4), to=c(2,3,4,1))
+hard_cluster4$bbGDM_TransEnv_HC<-mapvalues(hard_cluster4$bbGDM_TransEnv_HC, from=c(1,2,3,4), to=c(2,3,1,4))
 hard_cluster4$GF_HC<-mapvalues(hard_cluster4$GF_HC ,from=c(1,2,3,4), to=c(3,2,4,1))
 hard_cluster4$MNet_HC<-mapvalues(hard_cluster4$MNet_HC ,from=c(1,2,3,4), to=c(2,3,4,1))
 hard_cluster4$HMSC_HC<-mapvalues(hard_cluster4$HMSC_HC ,from=c(1,2,3,4), to=c(2,3,4,1))
@@ -92,7 +96,9 @@ hard_cluster4$BioHC_RF<-mapvalues(hard_cluster4$BioHC_RF ,from=c(1,2,3,4), to=c(
 
 #create raster stack of predictions and extract survey site values
 mods2<-c("Env_Only", "BioHC_RF", "SpRF_HC","HMSC_HC" , "MNet_HC" , 
-         "GDM_HC", "bbGDM_HC","GF_HC", "SAM", "RCP")
+         "GDM_Dissim_HC","GDM_TransEnv_HC",  "bbGDM_Dissim_HC"  , "bbGDM_TransEnv_HC",
+         "GF_HC", "SAM", "RCP")
+
 
 ##plot groups
 rat2<-data.frame(ID=1:4, Group=paste0("Group", 1:4))
@@ -114,7 +120,7 @@ site_classes<-as.data.frame(raster::extract(clust4, dat[,5:6]))
 
 ### 2 stage methods: predict then heirarchical cluster
 
-clusts<-names(site_classes)[1:8]
+clusts<-names(site_classes)[1:10]
 hclust_contents_SD<-list()
 hclust_contents_SE<-list()
 
@@ -169,7 +175,7 @@ rcp_post_contents_SE$Group<-mapvalues(rcp_post_contents_SE$Group ,from=c(1,2,3,4
 
 ##SAMs and RCPs----
 # get spatial group predictions and match initial sites
-sam_rast<-rasterize(na.omit(pred_sp)[,1:2], env_raster, sam4_pred$fit)
+sam_rast<-rasterize(na.omit(pred_sp)[,1:2], env_raster, sam4_boot_pred$ptPreds)
 
 sam_probs<-raster::extract(sam_rast, dat[,c("Long", "Lat")])
 
@@ -201,8 +207,8 @@ sam_post_contents_SE<-dotplot_env_tab(mean_df = sam_calc_postprob$mean,
                                       nGrp=4, env=env_vars, method="SAM")
 
 #fix label switching issue
-sam_post_contents_SD$Group<-mapvalues(sam_post_contents_SD$Group ,from=c(1,2,3,4), to=c(4,2,1,3))
-sam_post_contents_SE$Group<-mapvalues(sam_post_contents_SE$Group ,from=c(1,2,3,4), to=c(4,2,1,3))
+sam_post_contents_SD$Group<-mapvalues(sam_post_contents_SD$Group ,from=c(1,2,3,4), to=c(2,4,1,3))
+sam_post_contents_SE$Group<-mapvalues(sam_post_contents_SE$Group ,from=c(1,2,3,4), to=c(2,4,1,3))
 
 
 #dotplot of contents
@@ -215,43 +221,44 @@ contents_SE<-rbind(do.call(rbind, hclust_contents_SE),
 
 #set order of plotting
 contents_SD$Method<-contents_SD$Method<-factor(contents_SD$Method, 
-                        levels=c("Env_Only", "BioHC_RF", "SpRF_HC", "HMSC_HC", "MNet_HC", "GDM_HC", 
-                                 "bbGDM_HC", "GF_HC", "SAM", "RCP"))
+                        levels=c("Env_Only", "BioHC_RF", "SpRF_HC", "HMSC_HC", "MNet_HC", "GDM_Dissim_HC","GDM_TransEnv_HC", 
+                                 "bbGDM_Dissim_HC", "bbGDM_TransEnv_HC", "GF_HC", "SAM", "RCP"))
 
 contents_SD$env<-mapvalues(contents_SD$env, from=env_vars, to=pretty_env)
 
 
 contents_SE$Method<-contents_SE$Method<-factor(contents_SD$Method, 
-                                               levels=c("Env_Only", "BioHC_RF", "SpRF_HC", "HMSC_HC", "MNet_HC", "GDM_HC", 
-                                                        "bbGDM_HC", "GF_HC", "SAM", "RCP"))
+                                               levels=c("Env_Only", "BioHC_RF", "SpRF_HC", "HMSC_HC", "MNet_HC", "GDM_Dissim_HC","GDM_TransEnv_HC", 
+                                                        "bbGDM_Dissim_HC", "bbGDM_TransEnv_HC", "GF_HC", "SAM", "RCP"))
 
 
 contents_SE$env<-mapvalues(contents_SE$env, from=env_vars, to=pretty_env)
 contents_SD$env<-contents_SE$env<-factor(contents_SD$env, levels=c("Depth", "Surface_temp",   "Floor_temp"  , "ssha_SD" ,  "Current", "NO3_mean", "Chla_SD" , "Slope" ))
 
-
+names(contents_SD)[2]<-"Value"
 
 
 p<-ggplot(data = contents_SD, 
-          aes(x = Group, y = mean, ymin = lower, ymax = upper, colour = Method)) +
+          aes(x = Group, y = Value, ymin = lower, ymax = upper, colour = Method)) +
   geom_point(position = position_dodge(0.75), size=0.6) +
   geom_errorbar(position = position_dodge(0.75), width = 0.1) +
   coord_flip() +
   scale_colour_manual(name="Method", 
-                      values = c("grey","purple" ,"pink", "yellow"  , "orange", "green", 
-                                 "chartreuse4", "darkgreen","blue", "darkblue")) + #need to add enough colour for sampling levels here!
+                      values = c("grey","purple" ,"pink", "yellow"  , "orange", 
+                                 "chartreuse1", "chartreuse3", "darkseagreen2", "darkgreen", "darkslategray",
+                                 "deepskyblue", "darkblue")) + #need to add enough colour for sampling levels here!
   #values=terrain.colors(14)) +
   theme_bw() +
   theme(panel.grid.major.y = element_line(colour = "grey", linetype = "dashed"),
         panel.grid.major.x = element_blank(),
         panel.grid.minor.x = element_blank(), 
         axis.text.y = element_text(face="italic"),
-        axis.text.x = element_text(size=7),
+        axis.text.x = element_text(size=6),
         legend.key = element_blank()) +
   facet_wrap( ~env, ncol=4, scales="free") 
 
-tiff(file="Results/Plots/Grp_env_SD_red.tiff", height=12, width=16, units="cm", res=1000)
-p + scale_x_discrete(name="Group", breaks=c(1,2,3,4), limits=c("1","2", "3", "4"))
+tiff(file="Results/Plots/Grp_env_SD_red.tiff", height=13, width=17, units="cm", res=1000)
+p + scale_x_discrete(name="Bioregion", breaks=c(1,2,3,4), limits=c("1","2", "3", "4"))
 dev.off()
 
 
@@ -292,7 +299,7 @@ plot.new()
 
 #manually match up group labels
 #hard_cluster4$BioHC_RF<-mapvalues(hard_cluster4$BioHC_RF ,from=c(1,2,3,4), to=c(1,4,2,3))
-legend("center", legend= c(paste0("Group ", 1:4)), lty=c(3,2,1,1), xpd=NA, bty="n",
+legend("center", legend= c(paste0("Bioregion ", 1:4)), lty=c(3,2,1,1), xpd=NA, bty="n",
        col=c("darkolivegreen4", "grey", "orange1","darkred" ))
 title(ylab="Response", outer=TRUE, line=1)
 dev.off()
@@ -300,27 +307,27 @@ dev.off()
 
 
 ## B) bbGDM----
-bbgdm_response<-as.response(gdm_mod)
+#bbgdm_response<-as.response(non_bbgdm_mod)
 
-tiff(file="Results/Plots/bbGDM_PPlots.tiff", height = 5, width=7, units="in", res=1000)
-par(mfrow=c(3,3), mar=c(4,4,2,2))
+#tiff(file="Results/Plots/bbGDM_PPlots.tiff", height = 5, width=7, units="in", res=1000)
+#par(mfrow=c(3,3), mar=c(4,4,2,2))
 
-  Splinesum <- Spline.05 <- Spline.95 <- NULL
-  Splinessum <- mapply(`%*%`, bbgdm_response$X, bbgdm_response$bspl)
-  Splines.05 <- mapply(`%*%`, bbgdm_response$X, bbgdm_response$bspl.05)
-  Splines.95 <- mapply(`%*%`, bbgdm_response$X, bbgdm_response$bspl.95)
-  for (i in 1:ncol(Splinessum)) {
-    plot(bbgdm_response$grid_real[, i], Splinessum[, i], type = "l", ylab = paste0("f(", 
-                                                                      pretty_env[i], ")"), xlab = pretty_env[i], 
-         ylim = range(c(Splinessum, Splines.05, Splines.95)))
-    polygon(c(bbgdm_response$grid_real[, i], rev(bbgdm_response$grid_real[, i])), c(Splines.05[, 
-                                                                     i], rev(Splines.95[, i])), col = "grey80", border = NA)
-    lines(bbgdm_response$grid_real[, i], Splinessum[, i], col = "black", 
-          type = "l", lwd = 2)
-    mtext(paste0("(", letters[i], ")"), adj = 0)
-  }
+#  Splinesum <- Spline.05 <- Spline.95 <- NULL
+#  Splinessum <- mapply(`%*%`, bbgdm_response$X, bbgdm_response$bspl)
+#  Splines.05 <- mapply(`%*%`, bbgdm_response$X, bbgdm_response$bspl.05)
+#  Splines.95 <- mapply(`%*%`, bbgdm_response$X, bbgdm_response$bspl.95)
+#  for (i in 1:ncol(Splinessum)) {
+#    plot(bbgdm_response$grid_real[, i], Splinessum[, i], type = "l", ylab = paste0("f(", 
+#                                                                      pretty_env[i], ")"), xlab = pretty_env[i], 
+#         ylim = range(c(Splinessum, Splines.05, Splines.95)))
+#    polygon(c(bbgdm_response$grid_real[, i], rev(bbgdm_response$grid_real[, i])), c(Splines.05[, 
+#                                                                     i], rev(Splines.95[, i])), col = "grey80", border = NA)
+#    lines(bbgdm_response$grid_real[, i], Splinessum[, i], col = "black", 
+#          type = "l", lwd = 2)
+#    mtext(paste0("(", letters[i], ")"), adj = 0)
+#  }
 #plot(bbgdm_response)
-dev.off()
+#dev.off()
 
 
 ## C) SAMs----
@@ -341,18 +348,19 @@ tiff(file="Results/Plots/SAM_partial2.tiff", height=6, width=6, units="in", res=
 par(mfrow=c(3,3), mar=c(4,2,1,1), oma=c(4,5,1,1))
 for(i in 1:length(part_vals)){
   temp<-as.data.frame(part_sc[[i]][,env2_vars])
-   pred<-predict(object=sam4_mod, temp)
+  boots<- species_mix.bootstrap(sam4_mod, nboot=10, type="BayesBoot")
+   pred<-predict(object=sam4_mod,boots, newdata=temp)
    #account for label switching
-   dimnames(pred$fit)[[2]]<- c(paste0("Group", c(4,2,1,3)))
-   pred$fit<-as.data.frame(pred$fit)
-   pred$fit<-pred$fit[,c(paste0("Group", c(1,2,3,4)))]
+   dimnames(pred$ptPreds)[[2]]<- c(paste0("Bioregion", c(2,4,1,3)))
+   pred$ptPreds<-as.data.frame(pred$ptPreds)
+   pred$ptPreds<-pred$ptPreds[,c(paste0("Bioregion", c(1,2,3,4)))]
     matplot(x=as.vector(part_vals[[i]][,names(part_vals[[i]]) %in% env_vars[i]]), 
-            y= pred$fit, type='l', col=c("darkolivegreen4", "grey", "orange1", "darkred"), lty=c(3,2,1,1), xlab=pretty_env[i], ylab=NULL, lwd=1.5, ylim=c(0,1))
+            y= pred$ptPreds, type='l', col=c("darkolivegreen4", "grey", "orange1", "darkred"), lty=c(3,2,1,1), xlab=pretty_env[i], ylab=NULL, lwd=1.5, ylim=c(0,1))
 
 }
 plot.new()
-legend(x="center", legend=paste0("Group ", 1:4), col=c("darkolivegreen4", "grey", "orange1", "darkred"),lty=c(3,2,1,1), 
-       cex=1, bty="n")
+legend(x="center", legend=paste0("Bioregion ", 1:4), col=c("darkolivegreen4", "grey", "orange1", "darkred"),lty=c(3,2,1,1), 
+       cex=1.2, bty="n")
 mtext(text="Probability of Occurrence", side=2, line=1, outer=TRUE)
 dev.off()
 
@@ -367,8 +375,8 @@ for(i in 1:length(rcpmod_vars)){
   temp<-as.data.frame(part_sc[[rcpmod_vars[i]]])
   pred<-as.data.frame(predict(rcp4_mod, newdata=temp))
   #account for label switching
-  names(pred)<- c(paste0("Group", c(2,3,4,1)))
-  pred<-pred[, c(paste0("Group", c(1,2,3,4)))]
+  names(pred)<- c(paste0("Bioregion", c(2,3,4,1)))
+  pred<-pred[, c(paste0("Bioregion", c(1,2,3,4)))]
   pretty_lab<-c("Depth", "Surface_temp")
  # matplot(x=as.vector(part_vals[[i]][,names(part_vals[[i]]) %in% env_vars[i]]),
           matplot(x=as.vector(part_vals[[rcpmod_vars[i]]][,rcpmod_vars[i]]),
@@ -376,8 +384,8 @@ for(i in 1:length(rcpmod_vars)){
   
 }
 plot.new()
-legend(x="center", legend=c(paste0("Group", c(1,2,3,4))), col=c("darkolivegreen4", "grey", "orange1", "darkred"), 
-       lty=c(3,2,1,1),    cex=0.9, bty="n")
+legend(x="center", legend=c(paste0("Bioregion ", c(1,2,3,4))), col=c("darkolivegreen4", "grey", "orange1", "darkred"), 
+       lty=c(3,2,1,1),    cex=1.1, bty="n")
 mtext(text="Probability of Occurrence", cex=0.7, side=2, line=1, outer=TRUE)
 dev.off()
 
