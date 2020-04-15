@@ -31,18 +31,20 @@ library(vegan)          #Jaccard Index
 library(cluster)        #Hierarchical clustering
 library(fpc)            #Cluster statistics
 library(extendedForest) # Random forests with conditional variable importance
-library(bbgdm)          #Bayesian Bootstrap Generalised Dissimilarity Models (and naive GDM)
+#library(bbgdm)          #Bayesian Bootstrap Generalised Dissimilarity Models (and naive GDM)
+library(gdm)
 library(RCPmod)         #Regions of Common Profile Models v2.188
-#devtools::install_github('skiptoniam/ecomix@dev')  #Species Archetype Models (SAMs)
+#devtools::install_github('skiptoniam/ecomix')  #Species Archetype Models (SAMs)
 library(ecomix) 
 library(HMSC)           #Hierarchical Modelling of Species Communities
 library(gradientForest) #Gradient Forests (an extension of Random Forests)
-#devtools::install_github('davharris/mistnet')  #Mistnet stochastic, multispecies neural network
+#devtools::install_github('davharris/mistnet') #Mistnet stochastic, multispecies neural network
 library(mistnet)
 library(RColorBrewer)   #colour palettes
 library(rasterVis)      #plotting rasters
 
-setwd("C:\\Users\\hillna\\UTAS_work\\Antarctic_BioModelling\\Analysis\\Community_modelling\\Comm_Analysis_Methods\\KP_Fish\\")
+setwd("C:\\Users\\hillna\\UTAS_work\\Projects\\Antarctic_BioModelling\\Analysis\\Community_modelling\\Comm_Analysis_Methods\\KP_Fish\\")
+#setwd("/perm_storage/Nics_files/Comm_Analysis_Methods/KP_Fish/")
 source("Code/Additional_Funcs.R")
 
 #Load required files
@@ -420,58 +422,101 @@ rm(auto, dat_hmsc, hmsc_clust)
 
 
 ## -----------------------------------------------------------
-## F) 2 STAGE: GENERALISED DISSIMILARITY MODELS & CLUSTER (GDM_HC and bbGDM_HC) ----
+## F) 2 STAGE: GENERALISED DISSIMILARITY MODELS & CLUSTER (GDM_Disim_HC, GDM_TransEnv_HC, and bbGDM_Dissim_HC, bbGDM_TransEnv_HC) ----
 ## ----------------------------------------------------------
 
-# formula for GDM and bbGDM
-form<- paste("~1 +", paste(env_vars, collapse= "+"))
+### Set up data
+## Using gdm package and bbgdm wrapper 
+
+which(duplicated(dat[,5:6]))
+#duplicate co-ordinates sites 37 and 86 (even though they are different samples) causes problems for bbgdm. Remove site 87
+
+env_gdm <- as.matrix(data.frame(site=1:524,x=dat$Long,y=dat$Lat,dat[,env_vars]))
+env_gdm<-env_gdm[-86,]
+bio_gdm<- data.frame(site=1:524,fish_dat)
+bio_gdm<- bio_gdm [-86,]
+  
+#format data as paired sitewise differences to input into gdm and bbgdm model
+gdmTab <- formatsitepair(bioData =bio_gdm, bioFormat=1,
+                         siteColumn = 'site', predData=env_gdm, XColumn = 'x',YColumn = 'y')
+
+#format prediction space environmental data as paired sites in order to generate predictions
+#note- creating dummy bio data as gdm predict function requires formatsitepair input but ignores biodata
+
+#make sure predictors are in the same order as for model building
+gdm_pred_sp<-data.frame(x=pred_sp$x,y=pred_sp$y, pred_sp[, env_vars])
+#remove NAs
+gdm_pred_sp<-na.omit(gdm_pred_sp)
+
+pred_envTab <- formatsitepair(bioData = data.frame(site=1:dim(gdm_pred_sp)[1],A=0, B=1), 
+                              bioFormat=1, siteColumn = 'site', 
+                              predData=as.matrix(data.frame(site=1:dim(gdm_pred_sp)[1],gdm_pred_sp)), 
+                              XColumn = 'x',YColumn = 'y')
+
+### naive gdm----
+#model
+non_bbgdm_mod <- gdm(gdmTab, geo = FALSE)
+
+#predictions
+non_bbgdm_pred <- predict_gdm(non_bbgdm_mod, pred_envTab, bbgdm=FALSE)
+#format output vector as distance matrix
+class(non_bbgdm_pred)='dist'
+attr(non_bbgdm_pred,"Size")<-dim(na.omit(pred_sp))[1]
+non_bbgdm_pred<-as.dist(non_bbgdm_pred)
+
+# A) cluster dissimilarities directly
+non_bbgdm_clust<-hclust(non_bbgdm_pred, method="ward.D2")
+grp_stats(min_grp=2, max_grp=10, tree_clust= non_bbgdm_clust, dissim=non_bbgdm_pred, method="ward.D2")
+# sil and ch suggests 2 groups
+
+#set 2 groups
+non_bbgdm2_clust<-cutree(non_bbgdm_clust,2)
+#set 4 groups
+non_bbgdm4_clust<-cutree(non_bbgdm_clust,4)
 
 
-#Run bbGDM using sites with more than 1 species for calculating disimilarity matrix (same as hierarchical clustering on species' data)
-gdm_mod<-bbgdm(form, dat[rowSums(dat[,species])>1, species], dat[rowSums(dat[,species])>1, env_vars], family="binomial", link="logit",
-               dism_metric="number_non_shared", nboot= 100, geo=FALSE)  
+# B) cluster tranformed environmental variables
+non_bbgdm_env_trans <- gdm.transform(non_bbgdm_mod,gdm_pred_sp[, env_vars])
+non_bbgdm_env_trans_preds <- as.matrix(non_bbgdm_env_trans)
 
-rm(form)
+non_bbgdm_clust_env_trans<-hclust(dist(non_bbgdm_env_trans_preds, method="euclidean"), method="ward.D2")
+grp_stats(min_grp=2, max_grp=10, tree_clust= non_bbgdm_clust_env_trans, dissim=dist(non_bbgdm_env_trans_preds, method="euclidean"), method="ward.D2")
+# suggsts 3 clusters
 
-save(gdm_mod, file=paste0(path,"Results/bbGDM/bbGM_mod.RData"))
+non_bbgdm_clust3_env_trans<-cutree(non_bbgdm_clust_env_trans,3)
+non_bbgdm_clust4_env_trans<-cutree(non_bbgdm_clust_env_trans,4)
 
-#check diagnostics
-resids<-diagnostics(gdm_mod)
 
-pdf(file=paste0(path,"Results/bbGDM/bbGDM_diagnostics.pdf"), height=6, width=6)
-par(mfrow=c(2,2))
-plot(resids)
-dev.off()
-#model looks appropriate, but not much match between predicted and observed dissmilarities!
+### Bootstrapped gdm ----
+#model
+bbgdm_mod <- bbgdm(gdmTab, geo=FALSE, bootstraps=5000, ncores=10)
 
-## predict turnover across region----
-# Predicts pairwise dissimilarity between cells which are then clustered.
-bbgdm_pred<-pred_gdm_dissim(gdm_mod, as.matrix(na.omit(pred_sp[,3:10])))
+#predictions
+bbgdm_pred <- predict_gdm(bbgdm_mod,pred_envTab, bbgdm=TRUE)
+#format output vector as distance matrix
+class(bbgdm_pred)='dist'
+attr(bbgdm_pred,"Size")<-dim(na.omit(pred_sp))[1]
+bbgdm_pred<-as.dist(bbgdm_pred)
 
-#cluster predictions
+# A) cluster dissimilarities directly
 bbgdm_clust<-hclust(bbgdm_pred, method="ward.D2")
-grp_stats(min_grp=2, max_grp=10, tree_clust= bbgdm_clust, dissim=dist(bbgdm_pred, method="euclidean"), method="ward.D2")
+grp_stats(min_grp=2, max_grp=10, tree_clust= bbgdm_clust, dissim=bbgdm_pred, method="ward.D2")
+#sil and ch suggest 2 groups
 
-
-#sil width and boot suggests 2 grps
+#set 2 groups
 bbgdm2_clust<-cutree(bbgdm_clust,2)
-
-#set at 4 groups
+#set 4 groups
 bbgdm4_clust<-cutree(bbgdm_clust,4)
 
-##get naive GDM, predict and cluster----
-nonbb_gdm_mod<-gdm_mod$starting_gdm
-nonbb_gdm_pred<-pred_gdm_dissim(bbgdm_mod = gdm_mod, naive=TRUE, env_data = as.matrix(na.omit(pred_sp[,3:10])))
-nonbb_gdm_clust<-hclust(nonbb_gdm_pred, method="ward.D2")
 
-grp_stats(min_grp=2, max_grp=10, tree_clust= nonbb_gdm_clust, dissim=nonbb_gdm_pred, method="ward.D2")
+# B) cluster tranformed environmental variables
+bbgdm_env_trans <- bbgdm.transform (bbgdm_mod,gdm_pred_sp[, env_vars])
+bbgdm_clust_env_trans<-hclust(dist(bbgdm_env_trans, method="euclidean"), method="ward.D2")
+grp_stats(min_grp=2, max_grp=10, tree_clust= bbgdm_clust_env_trans, dissim=dist(bbgdm_env_trans, method="euclidean"), method="ward.D2")
+#suggests 3 clusters,  
 
-#sil width and ch suggests 2 grps
-nonbb_gdm2_clust<-cutree(nonbb_gdm_clust,2)
-
-#set at 4 groups
-nonbb_gdm4_clust<-cutree(nonbb_gdm_clust,4)
-
+bbgdm3_clust_env_trans<-cutree(bbgdm_clust_env_trans,3)
+bbgdm4_clust_env_trans<-cutree(bbgdm_clust_env_trans,4)
 
 
 ## ------------------------------------------------------------------
@@ -514,8 +559,8 @@ rm(sp_fac, GF_clust)
 
 # Format Model Inputs
 sam_dat <- make_mixture_data(quad_dat$rcp_data[,species], quad_dat$rcp_data[, env2_vars])
-form <- as.formula(paste0(paste0('cbind(',paste(species,collapse = ", "),") ~ 1 + ", paste(env2_vars, collapse= "+"))))
-
+#form <- as.formula(paste0(paste0('cbind(',paste(species,collapse = ", "),") ~ 1 + ", paste(env2_vars, collapse= "+"))))
+form <- as.formula(paste0(paste0('cbind(',paste(species,collapse = ", "),") ~ ", paste(env2_vars, collapse= "+"))))
 #run multiple groups and choose beset number of groups
 test_mods <- list()
  for(i in 1:5){
@@ -554,11 +599,11 @@ sam4_mod<-species_mix(archetype_formula = form,
                       standardise = FALSE,
                       control = species_mix.control(em_prefit=TRUE, em_refit = 8, em_steps = 5,
                                                     init_method = 'kmeans'))
-
-sam4_mod$vcov <- vcov(sam4_mod)
+#bootstrap estimate of parameters
+sam_boot_500<-species_mix.bootstrap(sam4_mod, nboot = 500, type = "BayesBoot")
 
 #generate predictions (gives predictions at both species and group level)
-sam4_pred<-predict(sam4_mod, as.data.frame(trans_pred_space[env2_vars]))
+sam4_boot_pred<-predict(sam4_mod, sam_boot_500, newdata=as.data.frame(trans_pred_space[env2_vars]))
 
 
 ## --------------------------------------------
@@ -686,34 +731,38 @@ rm(best_mod_multi, BICs, minPosteriorSites,
 ### Compile models, predictions, etc for further analysis and plotting----
 ################################################################################
 
-save(rf_sp_mods, bio2_rf, bio4_rf, gdm_mod, nonbb_gdm_mod,
+save(rf_sp_mods, bio2_rf, bio4_rf, gdm_mod, non_bbgdm_mod,
      GF_mod, MNet_mod, mod_hmsc, sam4_mod, rcp5_mod, rcp5_boot, 
      rcp4_mod, rcp4_boot,
      file="Results/models.RData")
 
-save(rf_sp_pred,bio2_rf_pred, bio4_rf_pred, bbgdm_pred, nonbb_gdm_pred, GF_pred,
+save(rf_sp_pred,bio2_rf_pred, bio4_rf_pred, bbgdm_pred, non_bbgdm_pred, GF_pred,
      MNet_pred, hmsc_pred, rcp4_spat_preds,rcp5_spat_preds,
-     sam4_pred, 
+     sam4_boot_pred, 
      file="Results/preds.RData")
 
 #compile hard clusters from 2 stage methods
 hard_cluster_opt<-data.frame(na.omit(pred_sp)[,c("x","y")], 
                              Env_Only=env4_clust, 
                              SpRF_HC=ssdm2_clust, 
-                             bbGDM_HC=bbgdm2_clust, GDM_HC=nonbb_gdm2_clust,
+                             bbGDM_Dissim_HC=bbgdm2_clust, bbGDM_TransEnv_HC=bbgdm3_clust_env_trans,
+                             GDM_Dissim_HC=non_bbgdm2_clust,GDM_TransEnv_HC=non_bbgdm_clust3_env_trans,
                              GF_HC=GF2_clust, MNet_HC=MNet4_clust,
                              HMSC_HC=hmsc2_clust)
 
+
 hard_cluster4<-data.frame(na.omit(pred_sp)[,c("x","y")], 
-                          Env_Only=env4_clust,
+                          Env_Only=env4_clust, 
                           SpRF_HC=ssdm4_clust, 
-                          bbGDM_HC=bbgdm4_clust, GDM_HC=nonbb_gdm4_clust,
+                          bbGDM_Dissim_HC=bbgdm4_clust, bbGDM_TransEnv_HC=bbgdm4_clust_env_trans,
+                          GDM_Dissim_HC=non_bbgdm4_clust,GDM_TransEnv_HC=non_bbgdm_clust4_env_trans,
                           GF_HC=GF4_clust, MNet_HC=MNet4_clust,
                           HMSC_HC=hmsc4_clust)
+
 
 save(hard_cluster_opt,hard_cluster4, 
      bio2_clust, bio4_clust,
      bio2_rf_pred, bio4_rf_pred,
      rcp4_spat_preds,rcp5_spat_preds, 
-     sam4_pred,
+     sam4_boot_pred,
      file="Results/pred_clusters.RData")
