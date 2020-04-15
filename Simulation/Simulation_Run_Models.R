@@ -31,8 +31,9 @@ library(vegan)          #Jaccard Index
 library(cluster)        #Hierarchical clustering
 library(fpc)            #Cluster statistics
 library(extendedForest) # Random forests with conditional variable importance
-#library(randomForest)   #Random Forests
-library(bbgdm)          #Bayesian Bootstrap Generalised Dissimilarity Models (and naive GDM)
+#library(randomForest)  #Random Forests
+#library(bbgdm)         #Bayesian Bootstrap Generalised Dissimilarity Models (and naive GDM)
+library(gdm)            #Generalised Dissimilarity Models (GDM)
 library(RCPmod)         #Regions of Common Profile Models v2.188
 #devtools::install_github('skiptoniam/ecomix@dev')  #Species Archetype Models (SAMs)
 library(ecomix) 
@@ -43,16 +44,17 @@ library(mistnet)
 library(RColorBrewer)   #colour palettes
 library(rasterVis)      #plotting rasters
 
-setwd("C:\\Users\\hillna\\UTAS_work\\Antarctic_BioModelling\\Analysis\\Community_modelling\\Comm_Analysis_Methods\\Simulation\\")
+setwd("C:\\Users\\hillna\\UTAS_work\\Projects\\Antarctic_BioModelling\\Analysis\\Community_modelling\\Comm_Analysis_Methods\\Simulation\\")
 source("Simulation_Additional_Funcs.R")
 
 #Load required files
 #files in "simulate_communities" folder on dropbox
 
-load("Sim_Setup/Many_covars_sim.RData") 
+load("Sim_Setup/Many_covars_sim_fin.RData") 
+#load("Sim_Setup/Many_covars_sim.RData") 
 #sim_data= simulated species probabilities, occurrences, species' groups for entire region
 #sp_200 = matrix of occurrences of 30 species at 200 sites to use as species dataset for analysis
-#env_dat= matrix of corresponding environmental conditions at 200 site to use as environmental dataset for analysis
+#env_200= matrix of corresponding environmental conditions at 200 site to use as environmental dataset for analysis (scaled and centred)
 
 load("Sim_Setup/sim_env_070518.RData") 
 # env= raster brick of environmental data for entire region
@@ -109,7 +111,7 @@ grp_stats(min_grp=2, max_grp=10, tree_clust= dat_clust, dissim=jac_dist, method=
 #set 2 groups
 bio2_clust<-cutree(dat_clust,2)
 #Set 3 groups
-bio3_clust<-cutree(dat_clust,3)
+bio3_clust.2<-cutree(dat_clust,3)
 
 
 ## Use Random Forest to match environment and predict clusters across sim region
@@ -385,51 +387,158 @@ rm(auto, dat_hmsc, hmsc_clust)
 ## F) 2 STAGE: GENERALISED DISSIMILARITY MODELS & CLUSTER ----
 ## ----------------------------------------------------------
 
-# formula for GDM GLM
-form<- paste("~1 +", paste(env_vars, collapse= "+"))
+### Set up data
+## Using gdm package and bbgdm wrapper 
 
-# Run Bayesian Bootstrap GDM
-bbgdm_mod<-bbgdm(form, sp_200,env_200, family="binomial", link="logit",
-                 dism_metric="number_non_shared", nboot= 100, geo=FALSE)  
+#format data as paired sitewise differences to input into gdm and bbgdm model
+env_200a <- as.matrix(data.frame(site=1:200,env_dat[sites,1:2],env_200[,env_vars]))
+gdmTab <- formatsitepair(bioData = data.frame(site=1:200,sp_200), bioFormat=1,
+                         siteColumn = 'site', predData=env_200a, XColumn = 'x',YColumn = 'y')
 
-#check diagnostics
-plot(diagnostics(bbgdm_mod))
-#looks mostly OK
 
-## Naive GDM
-nonbb_gdm_mod<-bbgdm_mod$starting_gdm
 
-#testgdm<-bbgdm(form, sp_200,env_200, family="binomial", link="logit",
-#               dism_metric="number_non_shared", nboot= 0, geo=FALSE)  
+#format prediction space environmental data as paired sites in order to generate predictions
+#note- creating dummy bio data as gdm predict function requires formatsitepair input but ignores biodata
+pred_envTab <- formatsitepair(bioData = data.frame(site=1:dim(sim_dat)[1],A=0, B=1), 
+                              bioFormat=1, siteColumn = 'site', 
+                              predData=as.matrix(data.frame(site=1:dim(sim_dat)[1],env_dat[,1:2],sim_dat[,env_vars])), 
+                              XColumn = 'x',YColumn = 'y')
 
-### Predict site-wise dissimilarity matrix and cluster
-#bootstrap GDM predictions
-bbgdm_pred<-pred_gdm_dissim(bbgdm_mod = bbgdm_mod, naive=FALSE, env_data = as.matrix(sim_dat[,2:9]))
+
+### naive gdm----
+#model
+non_bbgdm_mod <- gdm(gdmTab, geo = FALSE)
+
+#predictions
+non_bbgdm_pred <- predict_gdm(non_bbgdm_mod, pred_envTab, bbgdm=FALSE)
+#format output vector as distance matrix
+class(non_bbgdm_pred)='dist'
+attr(non_bbgdm_pred,"Size")<-dim(env_dat)[1]
+non_bbgdm_pred<- as.dist(non_bbgdm_pred)
+
+
+# A) cluster dissimilarities directly
+non_bbgdm_clust<-hclust(non_bbgdm_pred, method="ward.D2")
+grp_stats(min_grp=2, max_grp=10, tree_clust= non_bbgdm_clust, dissim=non_bbgdm_pred, method="ward.D2")
+# suggests 2 groups
+
+#set 2 groups
+non_bbgdm2_clust<-cutree(non_bbgdm_clust,2)
+#set 3 groups
+non_bbgdm3_clust<-cutree(non_bbgdm_clust,3)
+
+
+# B) cluster tranformed environmental variables
+non_bbgdm_env_trans <- gdm.transform(non_bbgdm_mod,sim_dat[,env_vars])
+non_bbgdm_clust_env_trans<-hclust(dist(non_bbgdm_env_trans, method="euclidean"), method="ward.D2")
+grp_stats(min_grp=2, max_grp=10, tree_clust= non_bbgdm_clust_env_trans, dissim=dist(non_bbgdm_env_trans, method="euclidean"), method="ward.D2")
+#Suggests 2 clusters
+
+non_bbgdm_clust2_env_trans<-cutree(non_bbgdm_clust_env_trans,2)
+non_bbgdm_clust3_env_trans<-cutree(non_bbgdm_clust_env_trans,3)
+
+### Bootstrapped gdm ----
+#model
+bbgdm_mod <- bbgdm(gdmTab, geo=FALSE, bootstraps=1000, ncores=1)
+
+#predictions
+bbgdm_pred <- predict_gdm(bbgdm_mod,pred_envTab, bbgdm=TRUE)
+#format output vector as distance matrix
+class(bbgdm_pred)='dist'
+attr(bbgdm_pred,"Size")<-dim(sim_dat)[1]
+bbgdm_pred<-as.dist(bbgdm_pred)
+
+
+# A) cluster dissimilarities directly
 bbgdm_clust<-hclust(bbgdm_pred, method="ward.D2")
-plot(bbgdm_clust)
-
 grp_stats(min_grp=2, max_grp=10, tree_clust= bbgdm_clust, dissim=bbgdm_pred, method="ward.D2")
-#suggests 2 groups
+#Suggests 2 groups
 
 #set 2 groups
 bbgdm2_clust<-cutree(bbgdm_clust,2)
 #set 3 groups
 bbgdm3_clust<-cutree(bbgdm_clust,3)
 
-#non-bootstrap predictions
-nonbb_gdm_pred<-pred_gdm_dissim(bbgdm_mod = bbgdm_mod, naive=TRUE, env_data = as.matrix(sim_dat[,2:9]))
-nonbb_gdm_clust<-hclust(nonbb_gdm_pred, method="ward.D2")
-plot(nonbb_gdm_clust)
 
-grp_stats(min_grp=2, max_grp=10, tree_clust= nonbb_gdm_clust, dissim=nonbb_gdm_pred, method="ward.D2")
+# B) cluster tranformed environmental variables
+bbgdm_env_trans <- bbgdm.transform (bbgdm_mod,sim_dat[,env_vars])
+bbgdm_clust_env_trans<-hclust(dist(non_bbgdm_env_trans, method="euclidean"), method="ward.D2")
+grp_stats(min_grp=2, max_grp=10, tree_clust= non_bbgdm_clust_env_trans, dissim=dist(non_bbgdm_env_trans_preds, method="euclidean"), method="ward.D2")
+#Suggests 2 clusters
+
+bbgdm2_clust_env_trans<-cutree(bbgdm_clust_env_trans,2)
+bbgdm3_clust_env_trans<-cutree(bbgdm_clust_env_trans,3)
+
+
+mods<-c( "GDM_Dissim2_HC","GDM_Dissim3_HC",
+         "GDM_TransEnv2_HC","GDM_TransEnv3_HC",  
+         "bbGDM_Dissim2_HC"  , "bbGDM_Dissim3_HC",
+         "bbGDM_TransEnv2_HC", "bbGDM_TransEnv3_HC")
+
+test<-as.data.frame(cbind(non_bbgdm2_clust,non_bbgdm3_clust,
+  non_bbgdm_clust2_env_trans,non_bbgdm_clust3_env_trans,
+  bbgdm2_clust, bbgdm3_clust,
+  bbgdm2_clust_env_trans,  bbgdm3_clust_env_trans))
+#names(test)<-mods
+
+  
+clust2<-stack()
+# for (i in 1:length(mods)){#
+  for (i in 1:ncol(test)){  
+#  hc_rast<-rasterize(env_dat[,1:2], env, field=test[,mods[i]])
+    hc_rast<-rasterize(env_dat[,1:2], env, field=test[,i])
+    clust2<-stack(clust2, hc_rast)
+}
+#names(clust2)<-mods
+names(clust2)<-names(test)
+
+########################
+## Superceeded by above
+# formula for GDM GLM
+#form<- paste("~1 +", paste(env_vars, collapse= "+"))
+
+# Run Bayesian Bootstrap GDM
+#bbgdm_mod<-bbgdm(form, sp_200,env_200, family="binomial", link="logit",
+#                 dism_metric="number_non_shared", nboot= 100, geo=FALSE)  
+
+#check diagnostics
+#plot(diagnostics(bbgdm_mod))
+#looks mostly OK
+
+## Naive GDM
+#nonbb_gdm_mod<-bbgdm_mod$starting_gdm
+
+#testgdm<-bbgdm(form, sp_200,env_200, family="binomial", link="logit",
+#               dism_metric="number_non_shared", nboot= 0, geo=FALSE)  
+
+### Predict site-wise dissimilarity matrix and cluster
+#bootstrap GDM predictions
+#bbgdm_pred<-pred_gdm_dissim(bbgdm_mod = bbgdm_mod, naive=FALSE, env_data = as.matrix(sim_dat[,2:9]))
+#bbgdm_clust<-hclust(bbgdm_pred, method="ward.D2")
+#plot(bbgdm_clust)
+
+#grp_stats(min_grp=2, max_grp=10, tree_clust= bbgdm_clust, dissim=bbgdm_pred, method="ward.D2")
+#suggests 2 groups
+
+#set 2 groups
+#bbgdm2_clust<-cutree(bbgdm_clust,2)
+#set 3 groups
+#bbgdm3_clust<-cutree(bbgdm_clust,3)
+
+#non-bootstrap predictions
+#nonbb_gdm_pred<-pred_gdm_dissim(bbgdm_mod = bbgdm_mod, naive=TRUE, env_data = as.matrix(sim_dat[,2:9]))
+#nonbb_gdm_clust<-hclust(nonbb_gdm_pred, method="ward.D2")
+#plot(nonbb_gdm_clust)
+
+#grp_stats(min_grp=2, max_grp=10, tree_clust= nonbb_gdm_clust, dissim=nonbb_gdm_pred, method="ward.D2")
 ##All suggest 2 groups
 
 #set 2 groups
-non_bbgdm2_clust<-cutree(nonbb_gdm_clust,2)
+#non_bbgdm2_clust<-cutree(nonbb_gdm_clust,2)
 #set 3 groups
-non_bbgdm3_clust<-cutree(nonbb_gdm_clust,3)
+#non_bbgdm3_clust<-cutree(nonbb_gdm_clust,3)
 
-rm(form, bbgdm_clust, nonbb_gdm_clust )
+#rm(form, bbgdm_clust, nonbb_gdm_clust )
 
 ## ------------------------------------------------------------------
 ## G) 2 Stage: GRADIENT FOREST THEN CLUSTER TRANSFORMED ENVIRONMENT ----
@@ -476,7 +585,7 @@ rm(sp_200_fac, GF_clust)
 samdat <- make_mixture_data(sp_200, env_200)
 
 # formula for archetypes GLMs
-form<-as.formula(paste0(paste0('cbind(',paste(species,collapse = ", "),") ~ 1 + ", paste(env_vars, collapse= "+"))))
+form<-as.formula(paste0(paste0('cbind(',paste(species,collapse = ", "),") ~  ", paste(env_vars, collapse= "+"))))
 
 #run multiple groups and choose best using BIC and other diagnostics as per (ref)
 
@@ -517,10 +626,11 @@ sam3_mod<-species_mix(archetype_formula = form,
                       control = species_mix.control(em_refit = 3, em_steps = 5,
                                                     init_method = 'kmeans'))
 
-sam3_mod$vcov <- vcov(sam3_mod)
+#sam3_mod$vcov <- vcov(sam3_mod)
+sam3_boot<-species_mix.bootstrap(sam3_mod,nboot=500, type="BayesBoot")
 
 #generate predictions (gives predictions at both species and )
-sam3_pred<-predict(sam3_mod, sim_dat[,-1])
+sam3_pred<-predict(sam3_mod, sam3_boot, newdata= sim_dat[,-1])
 
 rm(form, BICs, test_pi, min_test_pi, test_tau)
 
@@ -596,8 +706,8 @@ abline(h=7160, col="red", lty=2)
 ### Re-run multifit, find and get best model----
 best_form<-as.formula(paste("cbind(",paste(species, collapse=", "),")~ 1+",paste(c("temp", "O2", "sal"), collapse="+")))
 
-best_mod_multi<-regimix.multifit(form.RCP=best_form, data=lin_dat, nRCP=3, 
-                                 inits="random2", nstart=500, dist="Bernoulli",mc.cores=10)
+best_mod_multi<-RCPmod::regimix.multifit(form.RCP=best_form, data=lin_dat, nRCP=3, 
+                                 inits="random2", nstart=500, dist="Bernoulli",mc.cores=1)
 
 # Remove iterations where any RCP contains small number of sites (misfits)
 BICs <- sapply( best_mod_multi, function(x) x$BIC)
