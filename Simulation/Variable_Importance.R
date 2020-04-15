@@ -31,9 +31,8 @@ setwd("C:\\Users\\hillna\\UTAS_work\\Antarctic_BioModelling\\Analysis\\Community
 source("Simulation_Additional_Funcs.R")
 
 #Load required files
-#files in "simulate_communities" folder on dropbox
-
-load("Sim_setup/Many_covars_sim.RData") 
+load("Sim_setup/Many_covars_sim_fin.RData") 
+#load("Sim_setup/Many_covars_sim.RData") 
 #sim_data= simulated species probabilities, occurrences, species' groups for entire region
 #sp_200 = matrix of occurrences of 30 species at 200 sites to use as species dataset for analysis
 #env_dat= matrix of corresponding environmental conditions at 200 site to use as environmental dataset for analysis
