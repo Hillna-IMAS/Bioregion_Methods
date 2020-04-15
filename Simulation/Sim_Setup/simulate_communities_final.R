@@ -80,7 +80,7 @@ species_theta_generation_mixed_proportions <- function(alphas, means,variances,c
 ### Simulation Settings ----
 
 ## Load up the simulated environmental data    
-setwd("C:\\Users\\hillna\\Dropbox\\simulate_communities\\Many_covars")
+setwd("C:\\Users\\hillna\\UTAS_work\\Projects\\Antarctic_BioModelling\\Analysis\\Community_modelling\\Comm_Analysis_Methods\\Simulation\\Sim_setup\\")
 load("./sim_env_070518.RData")
 
 # generate realisation of data for entire survey region
