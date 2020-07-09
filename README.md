@@ -30,7 +30,7 @@ Files for the analyses of the Kerguelen Plateau fish dataset are contained in th
 - KPFish_Plot_environment.R: Code to generate and plot the environmental characteristics of bioregions.
 
 KP Fish data and associated environmental predictor variables needed to run the above analysis code can be found here:
-doi:10.26179/5f0528de8c1d2
+http://dx.doi.org/doi:10.26179/5f0528de8c1d2
 
 Rasters of the environmental variables and the prediction space needed to generate spatial predictions of the distribution of bioregions can be found here:
-doi:10.26179/5f055cd217aa8
+http://dx.doi.org/doi:10.26179/5f055cd217aa8
